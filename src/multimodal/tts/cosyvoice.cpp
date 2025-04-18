@@ -439,12 +439,12 @@ bool cosyvoice::speech_token_to_wav(const std::vector<int> tokens, const std::ve
     const int n_timesteps = 10;
     int len_mu = encoder_output[0].GetTensorTypeAndShapeInfo().GetElementCount();
     if (random_noise.size() < len_mu) {
-        int original_size = random_noise.size();
         random_noise.resize(len_mu);
-        std::mt19937 generator(time(nullptr));
-        std::normal_distribution<float> distribution(0.0f, 1.0f);
-        std::generate(random_noise.begin() + original_size, random_noise.end(), [&]() { return distribution(generator); });
     }
+
+    std::mt19937 generator(time(nullptr));
+    std::normal_distribution<float> distribution(0.0f, 1.0f);
+    std::generate(random_noise.begin(), random_noise.end(), [&]() { return distribution(generator); });
     if (t_span.empty()) {
         t_span.resize(n_timesteps + 1);
         for (int i = 0; i < n_timesteps + 1; i++) {
@@ -595,21 +595,18 @@ int cosyvoice::speech_token_sampler(float *logits, size_t size, std::vector<int>
     int win_size = 10;
     while (num_trials < max_trials) {
         token_id = _sampler.sample(logits, size, 1.0, top_k, top_p);
-        int rep_num = 0;
         int win_size_actual = std::min(win_size, (int)decoded_tokens.size());
+        std::map<int, int> rep_count;
         for (int i = 0; i < win_size_actual; i++) {
-            if (decoded_tokens[decoded_tokens.size() - win_size_actual + i] == token_id) {
-                rep_num++;
-            }
+            rep_count[decoded_tokens[decoded_tokens.size() - win_size_actual + i]]++;
         }
-        int retry_num = 0;
-        if (rep_num >= win_size * tau_r) {
-            int token_id_new = token_id;
-            while (token_id_new == token_id && retry_num < 10) {
-                token_id_new = _sampler.sample(logits, size, 1.0, top_k, top_p);
-                retry_num++;
-            }
-            token_id = token_id_new;
+
+        for (auto &[token, count] : rep_count) {
+            logits[token] -= count * 0.5 + 0.5;
+        }
+
+        if (rep_count[token_id] >= win_size * tau_r) {
+            token_id = _sampler.sample(logits, size, 1.0, 35, top_p);
         }
 
         if (!ignore_eos || token_id != eos_token) {
