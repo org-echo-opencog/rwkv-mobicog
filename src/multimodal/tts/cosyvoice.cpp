@@ -385,6 +385,12 @@ bool cosyvoice::speech_token_to_wav(const std::vector<int> tokens, const std::ve
     }
 
     LOGD("[TTS] tokens.size(): %d", tokens.size());
+    std::string debug_msg = "tokens: [";
+    for (int i = 0; i < tokens.size(); i++) {
+        debug_msg += std::to_string(tokens[i]) + ", ";
+    }
+    LOGI("[TTS] %s]", debug_msg.c_str());
+
     LOGD("[TTS] speech_features.size(): %dx%d", speech_features.size(), speech_features[0].size());
     LOGD("[TTS] speech_embedding.size(): %d", speech_embedding.size());
 
@@ -596,8 +602,14 @@ int cosyvoice::speech_token_sampler(float *logits, size_t size, std::vector<int>
                 rep_num++;
             }
         }
+        int retry_num = 0;
         if (rep_num >= win_size * tau_r) {
-            token_id = _sampler.sample(logits, size, 1.0, 1, top_p);
+            int token_id_new = token_id;
+            while (token_id_new == token_id && retry_num < 10) {
+                token_id_new = _sampler.sample(logits, size, 1.0, top_k, top_p);
+                retry_num++;
+            }
+            token_id = token_id_new;
         }
 
         if (!ignore_eos || token_id != eos_token) {
