@@ -5,6 +5,7 @@
 #include "sampler.h"
 #include "tokenizer.h"
 #include "onnxruntime_cxx_api.h"
+#include "net.h"
 
 namespace rwkvmobile {
 
@@ -21,9 +22,6 @@ public:
         }
         if (flow_encoder_session) {
             delete flow_encoder_session;
-        }
-        if (flow_decoder_estimator_session) {
-            delete flow_decoder_estimator_session;
         }
         if (hift_generator_session) {
             delete hift_generator_session;
@@ -70,8 +68,9 @@ private:
     Ort::Session *speech_tokenizer_session = nullptr;
     Ort::Session *campplus_session = nullptr;
     Ort::Session *flow_encoder_session = nullptr;
-    Ort::Session *flow_decoder_estimator_session = nullptr;
     Ort::Session *hift_generator_session = nullptr;
+
+    ncnn::Net flow_decoder_estimator_net;
 
     std::vector<float> random_noise;
     std::vector<float> t_span;

@@ -14,6 +14,9 @@
 #include "kaldi-native-fbank/csrc/online-feature.h"
 #include "kaldi-native-fbank/csrc/istft.h"
 
+#include "net.h"
+#include "mat.h"
+
 #define PRINT_FEATURE_INFO 0
 #define ORT_LOGGING_LEVEL ORT_LOGGING_LEVEL_WARNING
 
@@ -85,11 +88,19 @@ bool cosyvoice::load_flow_encoder(const std::string model_path) {
 }
 
 bool cosyvoice::load_flow_decoder_estimator(const std::string model_path) {
-    if (env == nullptr) {
-        env = new Ort::Env(ORT_LOGGING_LEVEL, "RWKV-MOBILE");
+    size_t pos = model_path.find_last_of(".");
+    std::string param_path = model_path.substr(0, pos) + ".param";
+    std::string bin_path = model_path.substr(0, pos) + ".bin";
+    int ret = flow_decoder_estimator_net.load_param(param_path.c_str());
+    if (ret != 0) {
+        LOGE("[TTS] Failed to load param: %s", param_path.c_str());
+        return false;
     }
-    Ort::SessionOptions session_options;
-    flow_decoder_estimator_session = new Ort::Session(*env, model_path.c_str(), session_options);
+    ret = flow_decoder_estimator_net.load_model(bin_path.c_str());
+    if (ret != 0) {
+        LOGE("[TTS] Failed to load model: %s", bin_path.c_str());
+        return false;
+    }
     return true;
 }
 
@@ -374,11 +385,6 @@ bool cosyvoice::speech_token_to_wav(const std::vector<int> tokens, const std::ve
         return false;
     }
 
-    if (flow_decoder_estimator_session == nullptr) {
-        LOGE("[TTS] Flow decoder estimator is not loaded");
-        return false;
-    }
-
     if (hift_generator_session == nullptr) {
         LOGE("[TTS] Hift generator is not loaded");
         return false;
@@ -429,8 +435,9 @@ bool cosyvoice::speech_token_to_wav(const std::vector<int> tokens, const std::ve
     LOGD("[TTS] embedding_out size: %dx%d", encoder_output[1].GetTensorTypeAndShapeInfo().GetShape()[0], encoder_output[1].GetTensorTypeAndShapeInfo().GetShape()[1]);
     LOGD("[TTS] conds size: %dx%dx%d", encoder_output[2].GetTensorTypeAndShapeInfo().GetShape()[0], encoder_output[2].GetTensorTypeAndShapeInfo().GetShape()[1], encoder_output[2].GetTensorTypeAndShapeInfo().GetShape()[2]);
 
+    int feat_len = encoder_output[0].GetTensorTypeAndShapeInfo().GetShape()[2];
     int mel_len1 = speech_features[0].size();
-    int mel_len2 = encoder_output[0].GetTensorTypeAndShapeInfo().GetShape()[2] - mel_len1;
+    int mel_len2 = feat_len - mel_len1;
     LOGD("[TTS] mel_len1: %d, mel_len2: %d", mel_len1, mel_len2);
     auto end = std::chrono::high_resolution_clock::now();
     LOGI("[TTS] flow_encoder duration: %lld ms", std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count());
@@ -438,6 +445,10 @@ bool cosyvoice::speech_token_to_wav(const std::vector<int> tokens, const std::ve
     // Flow decoder
     const int n_timesteps = 10;
     int len_mu = encoder_output[0].GetTensorTypeAndShapeInfo().GetElementCount();
+    if (len_mu != 80 * feat_len) {
+        LOGE("[TTS] size mismatch: len_mu: %d, feat_len: %d", len_mu, feat_len);
+        return false;
+    }
     if (random_noise.size() < len_mu) {
         random_noise.resize(len_mu);
     }
@@ -457,60 +468,63 @@ bool cosyvoice::speech_token_to_wav(const std::vector<int> tokens, const std::ve
     float dt = t_span[1] - t_span[0];
     float t = t_span[0];
 
-    std::vector<int64_t> x_input_shape = {2, 80, encoder_output[0].GetTensorTypeAndShapeInfo().GetShape()[2]};
-    std::vector<int64_t> mask_input_shape = {2, 1, encoder_output[0].GetTensorTypeAndShapeInfo().GetShape()[2]};
-    std::vector<int64_t> mu_input_shape = {2, 80, encoder_output[0].GetTensorTypeAndShapeInfo().GetShape()[2]};
-    std::vector<int64_t> t_input_shape = {2};
-    std::vector<int64_t> spks_input_shape = {2, 80};
-    std::vector<int64_t> cond_input_shape = {2, 80, encoder_output[0].GetTensorTypeAndShapeInfo().GetShape()[2]};
-    Ort::Value x_input = Ort::Value::CreateTensor<float>(allocator, x_input_shape.data(), x_input_shape.size());
-    Ort::Value mask_input = Ort::Value::CreateTensor<float>(allocator, mask_input_shape.data(), mask_input_shape.size());
-    Ort::Value mu_input = Ort::Value::CreateTensor<float>(allocator, mu_input_shape.data(), mu_input_shape.size());
-    Ort::Value t_input = Ort::Value::CreateTensor<float>(allocator, t_input_shape.data(), t_input_shape.size());
-    Ort::Value spks_input = Ort::Value::CreateTensor<float>(allocator, spks_input_shape.data(), spks_input_shape.size());
-    Ort::Value cond_input = Ort::Value::CreateTensor<float>(allocator, cond_input_shape.data(), cond_input_shape.size());
-
-    for (int i = 0; i < mask_input.GetTensorTypeAndShapeInfo().GetElementCount(); i++) {
-        mask_input.GetTensorMutableData<float>()[i] = 1.0f;
-    }
-
-    memcpy(mu_input.GetTensorMutableData<float>(), mu, len_mu * sizeof(float));
-    memset(mu_input.GetTensorMutableData<float>() + len_mu, 0, len_mu * sizeof(float));
-
-    memcpy(spks_input.GetTensorMutableData<float>(), embedding_out, 80 * sizeof(float));
-    memset(spks_input.GetTensorMutableData<float>() + 80, 0, 80 * sizeof(float));
-
-    memcpy(cond_input.GetTensorMutableData<float>(), conds, len_mu * sizeof(float));
-    memset(cond_input.GetTensorMutableData<float>() + len_mu, 0, len_mu * sizeof(float));
-
-    std::vector<const char*> input_names_estimator = {"x", "mask", "mu", "t", "spks", "cond"};
-    std::vector<const char*> output_names_estimator = {"dphi_dt"};
-
-    std::vector<Ort::Value> inputs_estimator;
-    inputs_estimator.push_back(std::move(x_input));
-    inputs_estimator.push_back(std::move(mask_input));
-    inputs_estimator.push_back(std::move(mu_input));
-    inputs_estimator.push_back(std::move(t_input));
-    inputs_estimator.push_back(std::move(spks_input));
-    inputs_estimator.push_back(std::move(cond_input));
+    std::vector<float> x_vector(320 * feat_len);
+    std::vector<float> x_cfg_vector(320 * feat_len, 0.0f);
 
     const float inference_cfg_rate = 0.7;
 
     start = std::chrono::high_resolution_clock::now();
-    memcpy(inputs_estimator[0].GetTensorMutableData<float>(), random_noise.data(), len_mu * sizeof(float));
-    memcpy(inputs_estimator[0].GetTensorMutableData<float>() + len_mu, random_noise.data(), len_mu * sizeof(float));
+    // memcpy(inputs_estimator[0].GetTensorMutableData<float>(), random_noise.data(), len_mu * sizeof(float));
+    // memcpy(inputs_estimator[0].GetTensorMutableData<float>() + len_mu, random_noise.data(), len_mu * sizeof(float));
+    memcpy(x_vector.data(), random_noise.data(), len_mu * sizeof(float));
+    memcpy(x_vector.data() + len_mu, mu, len_mu * sizeof(float));
+    #pragma omp parallel for
+    for (int i = 0; i < 80; i++) {
+        for (int j = 0; j < feat_len; j++) {
+            x_vector[2 * len_mu + i * feat_len + j] = embedding_out[i];
+        }
+    }
+    memcpy(x_vector.data() + 3 * len_mu, conds, len_mu * sizeof(float));
+
+    memcpy(x_cfg_vector.data(), random_noise.data(), len_mu * sizeof(float));
+
     for (int i = 1; i <= n_timesteps; i++) {
-        inputs_estimator[3].GetTensorMutableData<float>()[0] = t;
-        inputs_estimator[3].GetTensorMutableData<float>()[1] = t;
+        ncnn::Mat dphi_dt, dphi_dt_cfg;
 
-        auto decoder_output = flow_decoder_estimator_session->Run(run_options, input_names_estimator.data(), inputs_estimator.data(), 6, output_names_estimator.data(), 1);
-        auto dphi_dt = decoder_output[0].GetTensorMutableData<float>();
-        // LOGI("[TTS] dphi_dt size: %dx%dx%d", decoder_output[0].GetTensorTypeAndShapeInfo().GetShape()[0], decoder_output[0].GetTensorTypeAndShapeInfo().GetShape()[1], decoder_output[0].GetTensorTypeAndShapeInfo().GetShape()[2]);
+        ncnn::Extractor ex = flow_decoder_estimator_net.create_extractor();
+        ncnn::Mat x_in(feat_len, 320);
+        ncnn::Mat mask_in(feat_len, 1);
+        ncnn::Mat t_in(1);
+        mask_in.fill(1.0f);
+        t_in[0] = t;
 
+        memcpy(x_in.row(0), x_vector.data(), x_vector.size() * sizeof(float));
+
+        ex.input("in0", x_in);
+        ex.input("in1", mask_in);
+        ex.input("in2", t_in);
+        ex.extract("out0", dphi_dt);
+
+        ncnn::Extractor ex_cfg = flow_decoder_estimator_net.create_extractor();
+        ncnn::Mat x_cfg_in(feat_len, 320);
+        ncnn::Mat mask_cfg_in(feat_len, 1);
+        ncnn::Mat t_cfg_in(1);
+        x_cfg_in.fill(0.0f);
+        mask_cfg_in.fill(1.0f);
+        t_cfg_in[0] = t;
+
+        memcpy(x_cfg_in.row(0), x_cfg_vector.data(), len_mu * sizeof(float));
+
+        ex_cfg.input("in0", x_cfg_in);
+        ex_cfg.input("in1", mask_cfg_in);
+        ex_cfg.input("in2", t_cfg_in);
+        ex_cfg.extract("out0", dphi_dt_cfg);
+
+        #pragma omp parallel for
         for (int j = 0; j < len_mu; j++) {
-            float dphi_dt_val = (1.0 + inference_cfg_rate) * dphi_dt[j] - inference_cfg_rate * dphi_dt[j + len_mu];
-            inputs_estimator[0].GetTensorMutableData<float>()[j] += dphi_dt_val * dt;
-            inputs_estimator[0].GetTensorMutableData<float>()[j + len_mu] += dphi_dt_val * dt;
+            float dphi_dt_val = (1.0 + inference_cfg_rate) * dphi_dt[j] - inference_cfg_rate * dphi_dt_cfg[j];
+            x_vector[j] += dphi_dt_val * dt;
+            x_cfg_vector[j] += dphi_dt_val * dt;
         }
 
         t += dt;
@@ -523,8 +537,9 @@ bool cosyvoice::speech_token_to_wav(const std::vector<int> tokens, const std::ve
     start = std::chrono::high_resolution_clock::now();
     std::vector<int64_t> speech_feat_shape = {1, 80, mel_len2};
     Ort::Value speech_feat_input = Ort::Value::CreateTensor<float>(allocator, speech_feat_shape.data(), speech_feat_shape.size());
+    #pragma omp parallel for
     for (int i = 0; i < 80; i++) {
-        memcpy(speech_feat_input.GetTensorMutableData<float>() + i * mel_len2, inputs_estimator[0].GetTensorMutableData<float>() + i * (mel_len1 + mel_len2) + mel_len1, mel_len2 * sizeof(float));
+        memcpy(speech_feat_input.GetTensorMutableData<float>() + i * mel_len2, x_vector.data() + i * (mel_len1 + mel_len2) + mel_len1, mel_len2 * sizeof(float));
     }
 
     std::vector<const char*> input_names_hift = {"speech_feat"};
