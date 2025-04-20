@@ -74,7 +74,7 @@ if (ENABLE_NCNN_BACKEND)
         GIT_REPOSITORY https://github.com/Tencent/ncnn
         GIT_TAG master
     )
-    include(disable_unused_ncnn_layers)
+    # include(disable_unused_ncnn_layers)
     option(NCNN_BUILD_TOOLS "" OFF)
     option(NCNN_BUILD_EXAMPLES "" OFF)
     option(NCNN_BUILD_TESTS "" OFF)
