@@ -29,7 +29,7 @@ int main(int argc, char **argv) {
         encoder_path + "campplus.onnx",
         encoder_path + "flow_encoder.fp16.onnx",
         encoder_path + "flow_decoder_estimator.ncnn.bin",
-        encoder_path + "hift.onnx",
+        encoder_path + "hift.ncnn.bin",
         encoder_path + std::string(argv[4]),
         encoder_path + "spk_info.msgpack"
     );

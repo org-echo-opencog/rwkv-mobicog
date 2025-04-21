@@ -17,7 +17,7 @@
 #include "net.h"
 #include "mat.h"
 
-#define PRINT_FEATURE_INFO 0
+#define PRINT_FEATURE_INFO 1
 #define ORT_LOGGING_LEVEL ORT_LOGGING_LEVEL_WARNING
 
 static void debug_print_mean_std(std::vector<float> feat, std::string name) {
@@ -58,6 +58,23 @@ static void debug_print_mean_std_2d(std::vector<std::vector<float>> feat, std::s
 #endif
 }
 
+static int load_ncnn_model(ncnn::Net &net, const std::string &model_path) {
+    size_t pos = model_path.find_last_of(".");
+    std::string param_path = model_path.substr(0, pos) + ".param";
+    std::string bin_path = model_path.substr(0, pos) + ".bin";
+    int ret = net.load_param(param_path.c_str());
+    if (ret != 0) {
+        LOGE("[TTS] Failed to load param: %s", param_path.c_str());
+        return ret;
+    }
+    ret = net.load_model(bin_path.c_str());
+    if (ret != 0) {
+        LOGE("[TTS] Failed to load model: %s", bin_path.c_str());
+        return ret;
+    }
+    return 0;
+}
+
 namespace rwkvmobile {
 
 bool cosyvoice::load_speech_tokenizer(const std::string model_path) {
@@ -88,29 +105,11 @@ bool cosyvoice::load_flow_encoder(const std::string model_path) {
 }
 
 bool cosyvoice::load_flow_decoder_estimator(const std::string model_path) {
-    size_t pos = model_path.find_last_of(".");
-    std::string param_path = model_path.substr(0, pos) + ".param";
-    std::string bin_path = model_path.substr(0, pos) + ".bin";
-    int ret = flow_decoder_estimator_net.load_param(param_path.c_str());
-    if (ret != 0) {
-        LOGE("[TTS] Failed to load param: %s", param_path.c_str());
-        return false;
-    }
-    ret = flow_decoder_estimator_net.load_model(bin_path.c_str());
-    if (ret != 0) {
-        LOGE("[TTS] Failed to load model: %s", bin_path.c_str());
-        return false;
-    }
-    return true;
+    return load_ncnn_model(flow_decoder_estimator_net, model_path);
 }
 
 bool cosyvoice::load_hift_generator(const std::string model_path) {
-    if (env == nullptr) {
-        env = new Ort::Env(ORT_LOGGING_LEVEL, "RWKV-MOBILE");
-    }
-    Ort::SessionOptions session_options;
-    hift_generator_session = new Ort::Session(*env, model_path.c_str(), session_options);
-    return true;
+    return load_ncnn_model(hift_generator_net, model_path);
 }
 
 bool cosyvoice::load_spk_info(const std::string spk_info_path) {
@@ -385,10 +384,10 @@ bool cosyvoice::speech_token_to_wav(const std::vector<int> tokens, const std::ve
         return false;
     }
 
-    if (hift_generator_session == nullptr) {
-        LOGE("[TTS] Hift generator is not loaded");
-        return false;
-    }
+    // if (hift_generator_session == nullptr) {
+    //     LOGE("[TTS] Hift generator is not loaded");
+    //     return false;
+    // }
 
     LOGD("[TTS] tokens.size(): %d", tokens.size());
     std::string debug_msg = "tokens: [";
@@ -454,8 +453,8 @@ bool cosyvoice::speech_token_to_wav(const std::vector<int> tokens, const std::ve
     }
 
     std::mt19937 generator(time(nullptr));
-    std::normal_distribution<float> distribution(0.0f, 1.0f);
-    std::generate(random_noise.begin(), random_noise.end(), [&]() { return distribution(generator); });
+    std::normal_distribution<float> norm_dist(0.0f, 1.0f);
+    std::generate(random_noise.begin(), random_noise.end(), [&]() { return norm_dist(generator); });
     if (t_span.empty()) {
         t_span.resize(n_timesteps + 1);
         for (int i = 0; i < n_timesteps + 1; i++) {
@@ -535,31 +534,79 @@ bool cosyvoice::speech_token_to_wav(const std::vector<int> tokens, const std::ve
 
     // Hift generator
     start = std::chrono::high_resolution_clock::now();
-    std::vector<int64_t> speech_feat_shape = {1, 80, mel_len2};
-    Ort::Value speech_feat_input = Ort::Value::CreateTensor<float>(allocator, speech_feat_shape.data(), speech_feat_shape.size());
+    // std::vector<int64_t> speech_feat_shape = {1, 80, mel_len2};
+    // Ort::Value speech_feat_input = Ort::Value::CreateTensor<float>(allocator, speech_feat_shape.data(), speech_feat_shape.size());
+    // #pragma omp parallel for
+    // for (int i = 0; i < 80; i++) {
+    //     memcpy(speech_feat_input.GetTensorMutableData<float>() + i * mel_len2, x_vector.data() + i * (mel_len1 + mel_len2) + mel_len1, mel_len2 * sizeof(float));
+    // }
+
+    ncnn::Mat speech_feat(mel_len2, 80);
     #pragma omp parallel for
     for (int i = 0; i < 80; i++) {
-        memcpy(speech_feat_input.GetTensorMutableData<float>() + i * mel_len2, x_vector.data() + i * (mel_len1 + mel_len2) + mel_len1, mel_len2 * sizeof(float));
+        memcpy(speech_feat.row(i), x_vector.data() + i * (mel_len1 + mel_len2) + mel_len1, mel_len2 * sizeof(float));
     }
 
-    std::vector<const char*> input_names_hift = {"speech_feat"};
-    std::vector<const char*> output_names_hift = {"real", "img"};
-    std::vector<Ort::Value> inputs_hift;
-    inputs_hift.push_back(std::move(speech_feat_input));
+    ncnn::Mat f0, real, imag;
+    ncnn::Extractor ex = hift_generator_net.create_extractor();
+    ex.input("in0", speech_feat);
+    ex.extract("out2", f0);
+    std::vector<float> f0_vector(f0.row(0), f0.row(0) + f0.w);
+    debug_print_mean_std(f0_vector, "f0_vector");
 
-    auto hift_output = hift_generator_session->Run(run_options, input_names_hift.data(), inputs_hift.data(), 1, output_names_hift.data(), 2);
-    auto real = hift_output[0].GetTensorMutableData<float>();
-    auto imag = hift_output[1].GetTensorMutableData<float>();
-    LOGD("[TTS] real size: %dx%dx%d", hift_output[0].GetTensorTypeAndShapeInfo().GetShape()[0], hift_output[0].GetTensorTypeAndShapeInfo().GetShape()[1], hift_output[0].GetTensorTypeAndShapeInfo().GetShape()[2]);
-    LOGD("[TTS] img size: %dx%dx%d", hift_output[1].GetTensorTypeAndShapeInfo().GetShape()[0], hift_output[1].GetTensorTypeAndShapeInfo().GetShape()[1], hift_output[1].GetTensorTypeAndShapeInfo().GetShape()[2]);
-    std::vector<float> real_vector(real, real + hift_output[0].GetTensorTypeAndShapeInfo().GetElementCount());
-    std::vector<float> imag_vector(imag, imag + hift_output[1].GetTensorTypeAndShapeInfo().GetElementCount());
+    std::vector<std::vector<float>> sine_waves(9);
+    std::uniform_real_distribution<float> uniform_dist(-M_PI, M_PI);
+    #pragma omp parallel for
+    for (int i = 0; i < 9; i++) {
+        sine_waves[i].resize(f0.w);
+        float cumsum = 0.0f;
+        float phase = (i == 0 ? 0.0f : uniform_dist(generator));
+        for (int j = 0; j < f0.w; j++) {
+            cumsum += f0[j] * (i + 1) / 24000.0f;
+            sine_waves[i][j] = 0.1 * sin(2 * M_PI * (cumsum - trunc(cumsum)) + phase);
+            float uv = f0[j] > 0.0f ? 1.0f : 0.0f;
+            float noise_amp = uv * 0.003 + (1 - uv) * 0.1 / 3.0f;
+            sine_waves[i][j] = uv * sine_waves[i][j] + noise_amp * norm_dist(generator);
+        }
+    }
+
+    float merge_weight[] = {-0.0012, -0.0003, -0.0004,  0.0011,  0.0014,  0.0018, -0.0004, -0.0010, -0.0019};
+    #pragma omp parallel for
+    for (int i = 0; i < f0.w; i++) {
+        f0.row(0)[i] = 0.0f;
+        for (int j = 0; j < 9; j++) {
+            f0.row(0)[i] += merge_weight[j] * sine_waves[j][i];
+        }
+        f0.row(0)[i] = tanh(f0.row(0)[i]);
+    }
+    ex.input("in1", f0);
+    ex.extract("out0", real);
+    ex.extract("out1", imag);
+
+    // std::vector<const char*> input_names_hift = {"speech_feat"};
+    // std::vector<const char*> output_names_hift = {"real", "img"};
+    // std::vector<Ort::Value> inputs_hift;
+    // inputs_hift.push_back(std::move(speech_feat_input));
+
+    // auto hift_output = hift_generator_session->Run(run_options, input_names_hift.data(), inputs_hift.data(), 1, output_names_hift.data(), 2);
+    // auto real = hift_output[0].GetTensorMutableData<float>();
+    // auto imag = hift_output[1].GetTensorMutableData<float>();
+    // LOGD("[TTS] real size: %dx%dx%d", hift_output[0].GetTensorTypeAndShapeInfo().GetShape()[0], hift_output[0].GetTensorTypeAndShapeInfo().GetShape()[1], hift_output[0].GetTensorTypeAndShapeInfo().GetShape()[2]);
+    // LOGD("[TTS] img size: %dx%dx%d", hift_output[1].GetTensorTypeAndShapeInfo().GetShape()[0], hift_output[1].GetTensorTypeAndShapeInfo().GetShape()[1], hift_output[1].GetTensorTypeAndShapeInfo().GetShape()[2]);
+    std::vector<float> real_vector(real.w * real.h);
+    std::vector<float> imag_vector(imag.w * imag.h);
+    for (int i = 0; i < real.h; i++) {
+        memcpy(real_vector.data() + i * real.w, real.row(i), real.w * sizeof(float));
+    }
+    for (int i = 0; i < imag.h; i++) {
+        memcpy(imag_vector.data() + i * imag.w, imag.row(i), imag.w * sizeof(float));
+    }
     debug_print_mean_std(real_vector, "real_vector");
     debug_print_mean_std(imag_vector, "imag_vector");
     knf::StftResult stft_result = {
         .real = std::move(real_vector),
         .imag = std::move(imag_vector),
-        .num_frames = static_cast<int32_t>(hift_output[0].GetTensorTypeAndShapeInfo().GetShape()[1])
+        .num_frames = static_cast<int32_t>(real.w * real.h)
     };
 
     int istft_n_fft = 16;
@@ -593,6 +640,7 @@ bool cosyvoice::speech_token_to_wav(const std::vector<int> tokens, const std::ve
 
     output_samples = std::move(speech_output_istft);
 
+    // output_samples = std::vector<float>();
     return true;
 }
 

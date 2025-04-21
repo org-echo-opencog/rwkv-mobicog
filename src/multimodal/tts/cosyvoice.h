@@ -71,6 +71,7 @@ private:
     Ort::Session *hift_generator_session = nullptr;
 
     ncnn::Net flow_decoder_estimator_net;
+    ncnn::Net hift_generator_net;
 
     std::vector<float> random_noise;
     std::vector<float> t_span;
