@@ -750,6 +750,7 @@ int qnn_backend::load_model(std::string model_path) {
         if (use_external_lmhead) {
             external_lmhead_filetype = rmpack->getConfig()["external_lmhead_filetype"];
             if (external_lmhead_filetype == "mnn") {
+#ifndef _WIN32
                 try {
 #if USE_MMAP
                     void* buffer = rmpack->mmapFile("lmhead");
@@ -772,6 +773,10 @@ int qnn_backend::load_model(std::string model_path) {
                     LOGE("Failed to load external lmhead: %s", e.what());
                     return RWKV_ERROR_MODEL;
                 }
+#else
+                LOGE("TODO: MNN Windows arm64 building");
+                return RWKV_ERROR_MODEL;
+#endif
             } else {
                 LOGE("Unsupported external lmhead filetype: %s", external_lmhead_filetype.c_str());
                 return RWKV_ERROR_MODEL;
