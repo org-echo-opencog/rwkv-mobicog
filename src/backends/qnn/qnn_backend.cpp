@@ -33,8 +33,6 @@
 #include <unistd.h>
 #endif
 
-#define ENABLE_QNN 1
-
 #define DEFAULT_QNN_LOGLEVEL QNN_LOG_LEVEL_ERROR
 
 namespace rwkvmobile {
@@ -1487,6 +1485,26 @@ int qnn_backend::free_state(std::any state) {
         s.clear();
     }
     new_state.clear();
+    return RWKV_SUCCESS;
+}
+
+int qnn_backend::load_raw_states(std::vector<std::vector<half_float::half>> states) {
+    clear_state();
+    for (int graph_id = 0; graph_id < qnnDecodeGraphsCount; graph_id++) {
+        auto graphInfo     = (*qnnDecodeGraphsInfo)[graph_id];
+
+        for (size_t i = 0; i < graphInfo.numOutputTensors; i++) {
+            std::string outputName = std::string(QNN_TENSOR_GET_NAME(outputTensors[graph_id][i]));
+
+            if (outputName.find("state") != std::string::npos) {
+                int idx = std::stoi(outputName.substr(0, outputName.find("_")).substr(5).c_str());
+                if (idx % 3 == 1) {
+                    idx /= 3;
+                    memcpy(qnnIOTensorUtils->getBuffer(&outputTensors[graph_id][i]), states[idx].data(), states[idx].size() * sizeof(half_float::half));
+                }
+            }
+        }
+    }
     return RWKV_SUCCESS;
 }
 
