@@ -291,8 +291,10 @@ int qnn_backend::load_model(std::string model_path) {
         size_t pos = 0;
         int spill_fill_buffer_size = 0;
         if (is_rmpack) {
+#ifndef _WIN32
             n_chunks = rmpack->getConfig()["n_chunks"];
             spill_fill_buffer_size = rmpack->getConfig()["spill_fill_buffer_size"];
+#endif
         } else {
             pos = model_path.find("_chunk");
             if (pos != std::string::npos) {
@@ -317,6 +319,7 @@ int qnn_backend::load_model(std::string model_path) {
         for (int i = 0; i < n_chunks; i++) {
             // get file size and read file to memory / mmap file
             if (is_rmpack) {
+#ifndef _WIN32
                 bufferSizes[i] = rmpack->getFileSize("model_" + std::to_string(i));
 #if USE_MMAP
                 buffer[i] = std::shared_ptr<uint8_t>(
@@ -334,6 +337,7 @@ int qnn_backend::load_model(std::string model_path) {
                         }
                     }
                 );
+#endif
 #endif
             } else {
                 if (n_chunks > 1) {
@@ -712,14 +716,18 @@ int qnn_backend::load_model(std::string model_path) {
     num_heads = dims_state[0];
     hidden_size = num_heads * dims_state[1];
 
+#ifndef _WIN32
     if (rmpack != nullptr) {
         vocab_size = rmpack->getConfig()["vocab_size"];
-    } else {
+    } else
+#endif
+    {
         std::vector<size_t> dims;
         getTensorDims(dims, QNN_TENSOR_GET_DIMENSIONS(logitsOutputTensor), QNN_TENSOR_GET_RANK(logitsOutputTensor));
         vocab_size = dims[2];
     }
 
+#ifndef _WIN32
     if (rmpack != nullptr) {
         int use_external_embedding = rmpack->getConfig()["use_external_embedding"];
         if (use_external_embedding) {
@@ -783,6 +791,7 @@ int qnn_backend::load_model(std::string model_path) {
             }
         }
     }
+#endif
     return RWKV_SUCCESS;
 }
 
