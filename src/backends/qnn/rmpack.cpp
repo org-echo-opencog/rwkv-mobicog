@@ -2,10 +2,12 @@
 #include <fstream>
 #include <stdexcept>
 #include <cstring>
+#ifndef _WIN32
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#endif
 #include "json.hpp"
 
 using json = nlohmann::json;

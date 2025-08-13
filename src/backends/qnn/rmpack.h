@@ -1,8 +1,6 @@
 #ifndef RMPACK_H
 #define RMPACK_H
 
-#ifndef _WIN32 // TODO: add windows support
-
 #include "json.hpp"
 #include <string>
 #include <vector>
@@ -56,6 +54,7 @@ private:
     
     std::string file_path_;
     int fd_;
+    std::ifstream* file_;
     size_t file_size_;
     json config_;
     std::vector<FileInfo> files_;
@@ -66,7 +65,5 @@ private:
 
     void loadFile();
 };
-
-#endif // _WIN32
 
 #endif // RMPACK_H
