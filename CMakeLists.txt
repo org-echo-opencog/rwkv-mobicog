@@ -207,7 +207,7 @@ if (ENABLE_QNN_BACKEND)
                         src/backends/qnn/rwkv-qualcomm/PAL/src/linux/*.cpp)
     endif()
     set(RWKV_MOBILE_SRCS ${RWKV_MOBILE_SRCS} ${QNN_SRCS})
-    set(RWKV_MOBILE_SRCS ${RWKV_MOBILE_SRCS} src/backends/qnn/qnn_backend.cpp)
+    set(RWKV_MOBILE_SRCS ${RWKV_MOBILE_SRCS} src/backends/qnn/qnn_backend.cpp src/backends/qnn/rmpack.cpp)
 endif()
 
 if (ENABLE_WHISPER OR ENABLE_TTS)

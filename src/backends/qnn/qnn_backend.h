@@ -4,6 +4,7 @@
 #include "backend.h"
 #include "rwkv-qualcomm/Interfaces.hpp"
 #include "rwkv-qualcomm/Utils/IOTensor.hpp"
+#include "rmpack.h"
 
 namespace rwkvmobile {
 
@@ -107,6 +108,10 @@ private:
     void fill_quantized_tensor(float value, Qnn_Tensor_t *tensor);
 
     std::vector<float> logits_buffer;
+
+#ifndef _WIN32
+    RMPack *rmpack = nullptr;
+#endif
 };
 
 }

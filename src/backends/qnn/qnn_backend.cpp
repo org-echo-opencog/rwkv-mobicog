@@ -13,6 +13,7 @@
 #include "DataUtil.hpp"
 #include "Utils.hpp"
 #include "QnnTypeMacros.hpp"
+#include "rmpack.h"
 #include <HTP/QnnHtpPerfInfrastructure.h>
 #include <HTP/QnnHtpDevice.h>
 #include <HTP/QnnHtpGraph.h>
@@ -32,6 +33,7 @@
 #include <unistd.h>
 #endif
 
+#define ENABLE_QNN 1
 
 #define DEFAULT_QNN_LOGLEVEL QNN_LOG_LEVEL_ERROR
 
@@ -121,6 +123,21 @@ int qnn_backend::load_model(std::string model_path) {
 #else
         model_path.find(".so") == std::string::npos;
 #endif
+
+    bool is_rmpack = model_path.find(".rmpack") != std::string::npos;
+    if (is_rmpack) {
+#ifndef _WIN32
+        try {
+            rmpack = new RMPack(model_path);
+        } catch (const std::exception& e) {
+            LOGE("Error loading rmpack: %s", e.what());
+            return RWKV_ERROR_MODEL | RWKV_ERROR_IO;
+        }
+#else
+        LOGE("TODO: add windows support for rmpack");
+        return RWKV_ERROR_MODEL | RWKV_ERROR_IO;
+#endif
+    }
 
     // load QNN functions
     auto qnnStatusCode = dynamicloadutil::getQnnFunctionPointers(
@@ -255,7 +272,7 @@ int qnn_backend::load_model(std::string model_path) {
         }
     }
 
-    if (is_context_cache) {
+    if (is_context_cache || is_rmpack) {
         if (nullptr == qnnFunctionPointers.qnnSystemInterface.systemContextCreate ||
             nullptr == qnnFunctionPointers.qnnSystemInterface.systemContextGetBinaryInfo ||
             nullptr == qnnFunctionPointers.qnnSystemInterface.systemContextFree) {
@@ -263,77 +280,109 @@ int qnn_backend::load_model(std::string model_path) {
             return RWKV_ERROR_BACKEND | RWKV_ERROR_INIT;
         }
 
+        Qnn_ContextHandle_t first_contextHandle{nullptr};
+        QnnHtpContext_CustomConfig_t customConfigSF;
+        customConfigSF.option = QNN_HTP_CONTEXT_CONFIG_OPTION_REGISTER_MULTI_CONTEXTS;
+
         std::vector<std::shared_ptr<uint8_t>> buffer;
         std::vector<uint64_t> bufferSizes;
 
         int n_chunks = 1;
-        auto pos = model_path.find("_chunk");
-        if (pos != std::string::npos) {
-            n_chunks = std::stoi(model_path.substr(model_path.find("of") + 2));
-            LOGI("Number of chunks: %d", n_chunks);
+        size_t pos = 0;
+        int spill_fill_buffer_size = 0;
+        if (is_rmpack) {
+            n_chunks = rmpack->getConfig()["n_chunks"];
+            spill_fill_buffer_size = rmpack->getConfig()["spill_fill_buffer_size"];
+        } else {
+            pos = model_path.find("_chunk");
+            if (pos != std::string::npos) {
+                n_chunks = std::stoi(model_path.substr(model_path.find("of") + 2));
+                LOGI("Number of chunks: %d", n_chunks);
+                if (n_chunks == 4) {
+                    spill_fill_buffer_size = 320000000;
+                }
+            }
         }
 
         buffer.resize(n_chunks);
         bufferSizes.resize(n_chunks);
         qnnContextHandles.resize(n_chunks);
 
-        // read model binaries
-        datautil::StatusCode binaryReadingStatus{datautil::StatusCode::SUCCESS};
-        for (int i = 0; i < n_chunks; i++) {
-            if (n_chunks > 1) {
-                model_path = model_path.substr(0, pos) + "_chunk" + std::to_string(i+1) + "of" + std::to_string(n_chunks) + ".bin";
-                std::cout << "Reading chunk: " << model_path << std::endl;
-            }
-            std::tie(binaryReadingStatus, bufferSizes[i]) = datautil::getFileSize(model_path);
-            if (0 == bufferSizes[i]) {
-                LOGE("Received path to an empty file. Nothing to deserialize.");
-                return RWKV_ERROR_MODEL | RWKV_ERROR_IO;
-            }
-            std::cout << "Buffer size: " << bufferSizes[i] << std::endl;
-
-#if USE_MMAP
-            int fd = open(model_path.c_str(), O_RDONLY);
-            if (fd < 0) {
-                LOGE("Failed to open file %s", model_path.c_str());
-                return RWKV_ERROR_MODEL | RWKV_ERROR_IO;
-            }
-
-            buffer[i] = std::shared_ptr<uint8_t>(
-                (uint8_t*)mmap(NULL, bufferSizes[i], PROT_READ, MAP_SHARED, fd, 0), [bufferSizes, i](uint8_t* p) {
-                    if (p) {
-                        munmap(p, bufferSizes[i]);
-                    }
-                }
-            );
-
-            if (buffer[i].get() == MAP_FAILED) {
-                LOGE("Failed to mmap file %s", model_path.c_str());
-                close(fd);
-                return RWKV_ERROR_MODEL | RWKV_ERROR_IO;
-            }
-#else
-            buffer[i] = std::shared_ptr<uint8_t>(new uint8_t[bufferSizes[i]], std::default_delete<uint8_t[]>());
-            if (!buffer[i]) {
-                LOGE("Failed to allocate memory.");
-                return RWKV_ERROR_MODEL | RWKV_ERROR_ALLOC;
-            }
-
-            binaryReadingStatus = datautil::readBinaryFromFile(
-                model_path, reinterpret_cast<uint8_t*>(buffer[i].get()), bufferSizes[i]);
-            if (binaryReadingStatus != datautil::StatusCode::SUCCESS) {
-                LOGE("Failed to read binary data.");
-                return RWKV_ERROR_MODEL | RWKV_ERROR_IO;
-            }
-#endif
-        }
-
-        // inspect binary info
         int returnStatus = RWKV_SUCCESS;
         std::vector<GraphInfo_t **> graphInfos(n_chunks);
         std::vector<uint32_t> graphCounts(n_chunks);
 
-        for (int i = 0; i < n_chunks; i++)
-        {
+        // read model binaries
+        datautil::StatusCode binaryReadingStatus{datautil::StatusCode::SUCCESS};
+        for (int i = 0; i < n_chunks; i++) {
+            // get file size and read file to memory / mmap file
+            if (is_rmpack) {
+                bufferSizes[i] = rmpack->getFileSize("model_" + std::to_string(i));
+#if USE_MMAP
+                buffer[i] = std::shared_ptr<uint8_t>(
+                    (uint8_t*)rmpack->mmapFile("model_" + std::to_string(i)), [this, i](uint8_t* p) {
+                        if (p) {
+                            rmpack->unmapFile("model_" + std::to_string(i));
+                        }
+                    }
+                );
+#else
+                buffer[i] = std::shared_ptr<uint8_t>(
+                    (uint8_t*)rmpack->readFileToMemory("model_" + std::to_string(i)), [this, i](uint8_t* p) {
+                        if (p) {
+                            rmpack->freeMemory("model_" + std::to_string(i));
+                        }
+                    }
+                );
+#endif
+            } else {
+                if (n_chunks > 1) {
+                    model_path = model_path.substr(0, pos) + "_chunk" + std::to_string(i+1) + "of" + std::to_string(n_chunks) + ".bin";
+                    std::cout << "Reading chunk: " << model_path << std::endl;
+                }
+                std::tie(binaryReadingStatus, bufferSizes[i]) = datautil::getFileSize(model_path);
+                if (0 == bufferSizes[i]) {
+                    LOGE("Received path to an empty file. Nothing to deserialize.");
+                    return RWKV_ERROR_MODEL | RWKV_ERROR_IO;
+                }
+                std::cout << "Buffer size: " << bufferSizes[i] << std::endl;
+
+#if USE_MMAP
+                int fd = open(model_path.c_str(), O_RDONLY);
+                if (fd < 0) {
+                    LOGE("Failed to open file %s", model_path.c_str());
+                    return RWKV_ERROR_MODEL | RWKV_ERROR_IO;
+                }
+
+                buffer[i] = std::shared_ptr<uint8_t>(
+                    (uint8_t*)mmap(NULL, bufferSizes[i], PROT_READ, MAP_SHARED, fd, 0), [bufferSizes, i](uint8_t* p) {
+                        if (p) {
+                            munmap(p, bufferSizes[i]);
+                        }
+                    }
+                );
+
+                if (buffer[i].get() == MAP_FAILED) {
+                    LOGE("Failed to mmap file %s", model_path.c_str());
+                    close(fd);
+                    return RWKV_ERROR_MODEL | RWKV_ERROR_IO;
+                }
+#else
+                buffer[i] = std::shared_ptr<uint8_t>(new uint8_t[bufferSizes[i]], std::default_delete<uint8_t[]>());
+                if (!buffer[i]) {
+                    LOGE("Failed to allocate memory.");
+                    return RWKV_ERROR_MODEL | RWKV_ERROR_ALLOC;
+                }
+
+                binaryReadingStatus = datautil::readBinaryFromFile(
+                    model_path, reinterpret_cast<uint8_t*>(buffer[i].get()), bufferSizes[i]);
+                if (binaryReadingStatus != datautil::StatusCode::SUCCESS) {
+                    LOGE("Failed to read binary data.");
+                    return RWKV_ERROR_MODEL | RWKV_ERROR_IO;
+                }
+#endif
+            }
+            // inspect binary info
             QnnSystemContext_Handle_t sysCtxHandle{nullptr};
             if (QNN_SUCCESS != qnnFunctionPointers.qnnSystemInterface.systemContextCreate(&sysCtxHandle)) {
                 LOGE("Could not create system handle.");
@@ -368,16 +417,46 @@ int qnn_backend::load_model(std::string model_path) {
                 returnStatus = RWKV_ERROR_MODEL;
             }
 
-            // QnnHtpContext_CustomConfig_t customConfig;
-            // customConfig.option = QNN_HTP_CONTEXT_CONFIG_OPTION_IO_MEESTIMATION;
-            // customConfig.ioMemEstimation = true;
-            // QnnContext_Config_t* cfgs[] = {(QnnContext_Config_t*)&customConfig, NULL};
+            // make custom configs
+            QnnHtpContext_CustomConfig_t ioMemEstimation;
+            ioMemEstimation.option          = QNN_HTP_CONTEXT_CONFIG_OPTION_IO_MEM_ESTIMATION;
+            ioMemEstimation.ioMemEstimation = true;
+
+            QnnContext_Config_t** cfgs{nullptr};
+
+            int cfgs_count = 1;
+            if (spill_fill_buffer_size > 0) {
+                cfgs_count++;
+            }
+
+            cfgs                  = (QnnContext_Config_t**)malloc((cfgs_count + 1) * sizeof(QnnContext_Config_t*));
+            cfgs[0]               = (QnnContext_Config_t*)malloc(sizeof(QnnContext_Config_t));
+            cfgs[0]->option       = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
+            cfgs[0]->customConfig = reinterpret_cast<QnnContext_CustomConfig_t>(&ioMemEstimation);
+
+            if (spill_fill_buffer_size > 0) {
+                QnnHtpContext_GroupRegistration_t groupInfo{nullptr};
+                if (i == 0) {
+                    groupInfo.firstGroupHandle = 0x0;
+                } else {
+                    groupInfo.firstGroupHandle = first_contextHandle;
+                }
+                groupInfo.maxSpillFillBuffer = spill_fill_buffer_size;
+                customConfigSF.groupRegistration = groupInfo;
+
+                cfgs[cfgs_count - 1]               = (QnnContext_Config_t*)malloc(sizeof(QnnContext_Config_t));
+                cfgs[cfgs_count - 1]->option       = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
+                cfgs[cfgs_count - 1]->customConfig = reinterpret_cast<QnnContext_CustomConfig_t>(&customConfigSF);
+            }
+
+            cfgs[cfgs_count] = nullptr;
+
 
             if (RWKV_SUCCESS == returnStatus &&
                 qnnFunctionPointers.qnnInterface.contextCreateFromBinary(
                     qnnBackendHandle,
                     qnnDeviceHandle,
-                    nullptr, // (const QnnContext_Config_t**)cfgs,
+                    (const QnnContext_Config_t**)cfgs,
                     static_cast<void*>(buffer[i].get()),
                     bufferSizes[i],
                     &qnnContextHandles[i],
@@ -385,6 +464,13 @@ int qnn_backend::load_model(std::string model_path) {
                 LOGE("Could not create context from binary.");
                 returnStatus = RWKV_ERROR_MODEL;
             }
+
+            for (int j = 0; j < cfgs_count; j++) {
+                free(cfgs[j]);
+                cfgs[j] = nullptr;
+            }
+            free(cfgs);
+            cfgs = nullptr;
 
             isContextCreated = true;
             if (RWKV_SUCCESS == returnStatus) {
@@ -405,6 +491,10 @@ int qnn_backend::load_model(std::string model_path) {
             if (RWKV_SUCCESS != returnStatus) {
                 LOGD("Cleaning up graph Info structures.");
                 freeGraphsInfo(&graphInfos[i], graphCounts[i]);
+            }
+
+            if (RWKV_SUCCESS == returnStatus && i == 0) {
+                first_contextHandle = qnnContextHandles[i];
             }
         }
 
@@ -622,9 +712,13 @@ int qnn_backend::load_model(std::string model_path) {
     num_heads = dims_state[0];
     hidden_size = num_heads * dims_state[1];
 
-    std::vector<size_t> dims;
-    getTensorDims(dims, QNN_TENSOR_GET_DIMENSIONS(logitsOutputTensor), QNN_TENSOR_GET_RANK(logitsOutputTensor));
-    vocab_size = dims[2];
+    if (rmpack != nullptr) {
+        vocab_size = rmpack->getConfig()["vocab_size"];
+    } else {
+        std::vector<size_t> dims;
+        getTensorDims(dims, QNN_TENSOR_GET_DIMENSIONS(logitsOutputTensor), QNN_TENSOR_GET_RANK(logitsOutputTensor));
+        vocab_size = dims[2];
+    }
     return RWKV_SUCCESS;
 }
 
@@ -812,9 +906,9 @@ int qnn_backend::qnn_initialize_tensors() {
 
                     if (graph_id > 0) {
                         if (tensorName.find("v_first_in") != std::string::npos) {
-                            sharedTensorMapPrefill[tensorName] = (Qnn_Tensor_t*)decodeGraphsTensorNameToTensorPointer[0]["v_first_out_prefill_chunk1"];
+                            sharedTensorMapPrefill[tensorName] = (Qnn_Tensor_t*)prefillGraphsTensorNameToTensorPointer[0]["v_first_out_prefill_chunk1"];
                         } else if (tensorName == "in_prefill_chunk" + std::to_string(graph_id + 1)) {
-                            sharedTensorMapPrefill[tensorName] = (Qnn_Tensor_t*)decodeGraphsTensorNameToTensorPointer[graph_id - 1]["out_prefill_chunk" + std::to_string(graph_id)];
+                            sharedTensorMapPrefill[tensorName] = (Qnn_Tensor_t*)prefillGraphsTensorNameToTensorPointer[graph_id - 1]["out_prefill_chunk" + std::to_string(graph_id)];
                         }
                     }
                 }
