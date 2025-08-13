@@ -49,6 +49,7 @@ set(RWKV_MOBILE_SRCS
     src/tokenizer.cpp
     src/logger.cpp
     src/soc_detect.cpp
+    src/rmpack.cpp
 )
 
 if (WIN32)
@@ -155,7 +156,7 @@ endif()
 if (ENABLE_LLAMACPP_BACKEND)
     set(RWKV_MOBILE_SRCS ${RWKV_MOBILE_SRCS}
         src/backends/llama_cpp/llama_cpp_backend.cpp
-            src/embedding/rwkv_embedding.cpp
+        src/embedding/rwkv_embedding.cpp
     )
     if (ENABLE_VISION)
         set(RWKV_MOBILE_SRCS ${RWKV_MOBILE_SRCS}
@@ -207,7 +208,7 @@ if (ENABLE_QNN_BACKEND)
                         src/backends/qnn/rwkv-qualcomm/PAL/src/linux/*.cpp)
     endif()
     set(RWKV_MOBILE_SRCS ${RWKV_MOBILE_SRCS} ${QNN_SRCS})
-    set(RWKV_MOBILE_SRCS ${RWKV_MOBILE_SRCS} src/backends/qnn/qnn_backend.cpp src/backends/qnn/rmpack.cpp)
+    set(RWKV_MOBILE_SRCS ${RWKV_MOBILE_SRCS} src/backends/qnn/qnn_backend.cpp)
 endif()
 
 if (ENABLE_WHISPER OR ENABLE_TTS)
