@@ -719,6 +719,65 @@ int qnn_backend::load_model(std::string model_path) {
         getTensorDims(dims, QNN_TENSOR_GET_DIMENSIONS(logitsOutputTensor), QNN_TENSOR_GET_RANK(logitsOutputTensor));
         vocab_size = dims[2];
     }
+
+    if (rmpack != nullptr) {
+        int use_external_embedding = rmpack->getConfig()["use_external_embedding"];
+        if (use_external_embedding) {
+            // let's assert that the embedding dtype is the same as the input tensor dtype
+            try {
+#if USE_MMAP
+                external_embeddings = std::shared_ptr<uint8_t>(
+                    (uint8_t*)rmpack->mmapFile("embedding"),
+                    [this](uint8_t* p) {
+                        rmpack->unmapFile("embedding");
+                    }
+                );
+#else
+                external_embeddings = std::shared_ptr<uint8_t>(
+                    (uint8_t*)rmpack->readFileToMemory("embedding"),
+                    [this](uint8_t* p) {
+                        rmpack->freeMemory("embedding");
+                    }
+                );
+#endif
+            } catch (const std::exception& e) {
+                LOGE("Failed to load external embedding: %s", e.what());
+                return RWKV_ERROR_MODEL;
+            }
+        }
+
+        int use_external_lmhead = rmpack->getConfig()["use_external_lmhead"];
+        if (use_external_lmhead) {
+            external_lmhead_filetype = rmpack->getConfig()["external_lmhead_filetype"];
+            if (external_lmhead_filetype == "mnn") {
+                try {
+#if USE_MMAP
+                    void* buffer = rmpack->mmapFile("lmhead");
+#else
+                    void* buffer = rmpack->readFileToMemory("lmhead");
+#endif
+                    external_lmhead_interpretor = MNN::Interpreter::createFromBuffer(buffer, rmpack->getFileInfo("lmhead")->size);
+                    MNN::ScheduleConfig conf;
+                    external_lmhead_mnn_session = external_lmhead_interpretor->createSession(conf);
+#if USE_MMAP
+                    rmpack->unmapFile("lmhead");
+#else
+                    rmpack->freeMemory("lmhead");
+#endif
+                    auto input_tensor = external_lmhead_interpretor->getSessionInput(external_lmhead_mnn_session, "in");
+                    std::vector<int> input_shape = {1, static_cast<int>(hidden_size)};
+                    external_lmhead_interpretor->resizeTensor(input_tensor, input_shape);
+                    external_lmhead_interpretor->resizeSession(external_lmhead_mnn_session);
+                } catch (const std::exception& e) {
+                    LOGE("Failed to load external lmhead: %s", e.what());
+                    return RWKV_ERROR_MODEL;
+                }
+            } else {
+                LOGE("Unsupported external lmhead filetype: %s", external_lmhead_filetype.c_str());
+                return RWKV_ERROR_MODEL;
+            }
+        }
+    }
     return RWKV_SUCCESS;
 }
 
@@ -1181,7 +1240,7 @@ int qnn_backend::eval(std::vector<int> ids, float *& logits, bool skip_logits_co
         }
 
         auto end = std::chrono::high_resolution_clock::now();
-        prefill_speed = (ids.size() / 16 * 16) * 1000000.0 / std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+        prefill_speed = (ids.size() / prefillSequenceLength * prefillSequenceLength) * 1000000.0 / std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
 
         // LOGD("Prefilling tails using decode mode from %d to %d", idx, ids.size());
         for (; idx < ids.size(); idx++) {
@@ -1440,9 +1499,11 @@ int qnn_backend::release_model() {
         qnnEmbdGraphsInfo = nullptr;
     }
 
-    if (QNN_CONTEXT_NO_ERROR !=
-        qnnFunctionPointers.qnnInterface.contextFree(qnnContextHandles[0], nullptr)) {
-        LOGE("Could not free context");
+    for (int i = 0; i < qnnContextHandles.size(); i++) {
+        if (QNN_CONTEXT_NO_ERROR !=
+            qnnFunctionPointers.qnnInterface.contextFree(qnnContextHandles[i], nullptr)) {
+            LOGE("Could not free context");
+        }
     }
 
     qnn_destory_power_config_id();

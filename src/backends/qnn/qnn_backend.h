@@ -6,6 +6,8 @@
 #include "rwkv-qualcomm/Utils/IOTensor.hpp"
 #include "rmpack.h"
 
+#include <MNN/Interpreter.hpp>
+
 namespace rwkvmobile {
 
 class qnn_backend : public execution_provider {
@@ -108,6 +110,11 @@ private:
     void fill_quantized_tensor(float value, Qnn_Tensor_t *tensor);
 
     std::vector<float> logits_buffer;
+
+    std::shared_ptr<uint8_t> external_embeddings = nullptr;
+    std::string external_lmhead_filetype = "None";
+    MNN::Interpreter *external_lmhead_interpretor = nullptr;
+    MNN::Session *external_lmhead_mnn_session = nullptr;
 
 #ifndef _WIN32
     RMPack *rmpack = nullptr;
