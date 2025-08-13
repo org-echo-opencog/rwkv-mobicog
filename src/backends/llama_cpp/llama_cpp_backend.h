@@ -23,7 +23,7 @@ public:
     int free_state(std::any state) override;
     int release_model() override;
     int release() override;
-
+    int load_raw_states(std::vector<std::vector<half_float::half>> states) override;
 private:
     llama_model * model;
     llama_context * ctx;

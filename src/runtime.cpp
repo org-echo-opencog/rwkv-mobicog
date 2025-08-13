@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <thread>
+#include "rmpack.h"
 #ifdef ENABLE_WEBRWKV
 #include "web_rwkv_backend.h"
 #endif
@@ -328,6 +329,41 @@ std::string runtime::get_available_backends_str() {
     return ret;
 }
 
+int runtime::load_initial_state(std::string state_path) {
+    RMPack state_pack(state_path);
+    int hidden_size_config = state_pack.getConfig()["hidden_size"];
+    auto files = state_pack.getFiles();
+    if (files.size() != _backend->n_layers) {
+        LOGE("state file has %d layers, but model has %d layers\n", files.size(), _backend->n_layers);
+        return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
+    }
+    if (hidden_size_config != _backend->hidden_size) {
+        LOGE("state file has hidden size %d, but model has hidden size %d\n", hidden_size_config, _backend->hidden_size);
+        return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
+    }
+
+    size_t state_size = state_pack.getFileSize(files[0].filename);
+
+    std::vector<std::vector<half_float::half>> states(_backend->n_layers);
+    for (int i = 0; i < _backend->n_layers; i++) {
+        states[i].resize(state_size / sizeof(half_float::half));
+        auto data = state_pack.readFileToMemory(files[i].filename);
+        memcpy(states[i].data(), data, state_size);
+        state_pack.freeFileMemory(files[i].filename);
+    }
+    _backend->load_raw_states(states);
+
+    _backend->get_state(_state_head->state);
+    delete_state_node_after(_state_head);
+    return RWKV_SUCCESS;
+}
+
+void runtime::clear_initial_state() {
+    _backend->clear_state();
+    _backend->get_state(_state_head->state);
+    delete_state_node_after(_state_head);
+}
+
 int runtime::eval_logits(int id, float *& logits) {
     if (_backend == nullptr) {
         return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
@@ -507,12 +543,7 @@ runtime::state_node* runtime::match_and_load_state(const std::vector<int> &ids, 
     }
 
     _backend->set_state(node->state);
-    while (node->next) {
-        auto tmp = node->next->next;
-        _backend->free_state(node->next->state);
-        delete node->next;
-        node->next = tmp;
-    }
+    delete_state_node_after(node);
 
     new_ids_to_prefill = std::vector<int>(ids.begin() + compare_pos, ids.end());
     std::string debug_msg = "new tokens to prefill: ";
@@ -708,7 +739,7 @@ int runtime::set_prompt(std::string prompt) {
         return RWKV_SUCCESS;
     }
     _prompt = prompt;
-    _backend->clear_state();
+    _backend->set_state(_state_head->state);
     _state_head->next->ids = ids;
 
     if (ids.empty()) {
@@ -806,7 +837,7 @@ int runtime::set_audio_prompt(std::string path) {
         return RWKV_SUCCESS;
     }
     _prompt = prompt;
-    _backend->clear_state();
+    _backend->set_state(_state_head->state);
     _state_head->next->ids = ids;
 
     if (ids.empty()) {

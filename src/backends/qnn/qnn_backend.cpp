@@ -507,9 +507,9 @@ int qnn_backend::load_model(std::string model_path) {
         for (int i = 0; i < n_chunks; i++) {
             for (int j = 0; j < graphCounts[i]; j++) {
                 auto graphName = std::string((*graphInfos[i])[j].graphName);
-                if (graphName.find("ext_embedding_prefill") != std::string::npos) {
+                if (graphName.find("embedding_prefill") != std::string::npos) {
                     qnnEmbdPrefillGraphsCount++;
-                } else if (graphName.find("ext_embedding") != std::string::npos) {
+                } else if (graphName.find("embedding") != std::string::npos) {
                     qnnEmbdGraphsCount++;
                 } else if (graphName.find("prefill") != std::string::npos) {
                     qnnPrefillGraphsCount++;
@@ -818,8 +818,10 @@ void qnn_backend::fill_quantized_tensor(float value, Qnn_Tensor_t *tensor) {
 int qnn_backend::qnn_initialize_tensors() {
     if (!isTensorInitialized) {
         qnnIOTensorUtils->initialize(qnnContextHandles[0]);
-        decodeGraphsTensorNameToTensorPointer.resize(qnnDecodeGraphsCount);
-        decodeGraphsTensorNameToSize.resize(qnnDecodeGraphsCount);
+        if (qnnDecodeGraphsCount > 0) {
+            decodeGraphsTensorNameToTensorPointer.resize(qnnDecodeGraphsCount);
+            decodeGraphsTensorNameToSize.resize(qnnDecodeGraphsCount);
+        }
         if (qnnPrefillGraphsCount > 0) {
             prefillGraphsTensorNameToTensorPointer.resize(qnnPrefillGraphsCount);
             prefillGraphsTensorNameToSize.resize(qnnPrefillGraphsCount);
@@ -1024,10 +1026,20 @@ int qnn_backend::qnn_initialize_tensors() {
                     embdGraphsTensorNameToSize[graph_id][tensorName] = tensorDataSize;
                     // LOGI("Output Tensor %zu : %s Type: %d Size: %zu", i, tensorName.c_str(), QNN_TENSOR_GET_DATA_TYPE(graphInfo.outputTensors[i]), tensorDataSize);
 
-                    if (tensorName.find("state") != std::string::npos) {
-                        sharedTensorMapEmbd[tensorName] = (Qnn_Tensor_t*)decodeGraphsTensorNameToTensorPointer[graph_id][tensorName];
-                    } else if (tensorName == "out") {
-                        sharedTensorMapEmbd[tensorName] = (Qnn_Tensor_t*)decodeGraphsTensorNameToTensorPointer[graph_id]["out"];
+                    if (qnnDecodeGraphsCount > 0) {
+                        if (tensorName.find("state") != std::string::npos) {
+                            sharedTensorMapEmbd[tensorName] = (Qnn_Tensor_t*)decodeGraphsTensorNameToTensorPointer[graph_id][tensorName];
+                        } else if (tensorName == "out") {
+                            sharedTensorMapEmbd[tensorName] = (Qnn_Tensor_t*)decodeGraphsTensorNameToTensorPointer[graph_id]["out"];
+                        }
+                    }
+                }
+
+                if (qnnDecodeGraphsCount == 0) {
+                    if (!qnnIOTensorUtils->setupOutputTensors(&outputTensorsEmbd[graph_id], embdGraphsTensorNameToTensorPointer[graph_id], graphInfo,
+                                            embdGraphsTensorNameToSize[graph_id], qnnContextHandles[graph_id], false)) {
+                        LOGE("Error in setting up Output Tensors");
+                        return RWKV_ERROR_IO;
                     }
                 }
 
@@ -1044,15 +1056,23 @@ int qnn_backend::qnn_initialize_tensors() {
                     tensorDataSize *= typeSize;
                     embdGraphsTensorNameToSize[graph_id][tensorName] = tensorDataSize;
                     // LOGI("Input Tensor %zu : %s Type: %d Size: %zu", i, tensorName.c_str(), QNN_TENSOR_GET_DATA_TYPE(graphInfo.inputTensors[i]), tensorDataSize);
-                    if (tensorName.find("state") != std::string::npos) {
-                        sharedTensorMapEmbd[tensorName] = (Qnn_Tensor_t*)decodeGraphsTensorNameToTensorPointer[graph_id][tensorName];
+                    if (qnnDecodeGraphsCount > 0) {
+                        if (tensorName.find("state") != std::string::npos) {
+                            sharedTensorMapEmbd[tensorName] = (Qnn_Tensor_t*)decodeGraphsTensorNameToTensorPointer[graph_id][tensorName];
+                        }
+                    } else {
+                        if (tensorName.find("state") != std::string::npos) {
+                            sharedTensorMapEmbd[tensorName] = (Qnn_Tensor_t*)embdGraphsTensorNameToTensorPointer[graph_id][tensorName];
+                        }
                     }
                 }
 
-                if (!qnnIOTensorUtils->setupOutputWithSharedTensors(&outputTensorsEmbd[graph_id], embdGraphsTensorNameToTensorPointer[graph_id], graphInfo,
-                                                embdGraphsTensorNameToSize[graph_id], qnnContextHandles[graph_id], sharedTensorMapEmbd)) {
-                    LOGE("Error in setting up Output Tensors");
-                    return RWKV_ERROR_IO;
+                if (qnnDecodeGraphsCount > 0) {
+                    if (!qnnIOTensorUtils->setupOutputWithSharedTensors(&outputTensorsEmbd[graph_id], embdGraphsTensorNameToTensorPointer[graph_id], graphInfo,
+                                                    embdGraphsTensorNameToSize[graph_id], qnnContextHandles[graph_id], sharedTensorMapEmbd)) {
+                        LOGE("Error in setting up Output Tensors");
+                        return RWKV_ERROR_IO;
+                    }
                 }
 
                 if (!qnnIOTensorUtils->setupInputWithSharedTensors(&inputTensorsEmbd[graph_id], embdGraphsTensorNameToTensorPointer[graph_id], graphInfo,
@@ -1070,10 +1090,6 @@ int qnn_backend::qnn_initialize_tensors() {
         }
 
         if (qnnEmbdPrefillGraphsCount > 0) {
-            if (qnnEmbdPrefillGraphsCount != 1) {
-                LOGE("qnnEmbdPrefillGraphsCount: %d, should be 1", qnnEmbdPrefillGraphsCount);
-                return RWKV_ERROR_IO;
-            }
             std::unordered_map<std::string, Qnn_Tensor_t*> sharedTensorMapEmbdPrefill;
             for (int graph_id = 0; graph_id < qnnEmbdPrefillGraphsCount; graph_id++) {
                 auto graphInfo     = (*qnnEmbdPrefillGraphsInfo)[graph_id];

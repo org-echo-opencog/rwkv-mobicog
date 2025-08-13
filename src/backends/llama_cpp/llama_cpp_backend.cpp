@@ -6,6 +6,7 @@
 #include "llama_cpp_backend.h"
 #include "llama.h"
 #include "llama-model.h"
+#include "llama-memory-recurrent.h"
 #include "commondef.h"
 #include "logger.h"
 
@@ -82,7 +83,7 @@ int llama_cpp_backend::eval(std::vector<int> ids, float *& logits, bool skip_log
 
 int llama_cpp_backend::eval_with_embeddings(const float *embeddings, int n_tokens, float *& logits) {
     int n_embd = llama_model_n_embd(model);
-  
+
     // llava_embd_batch llava_batch = llava_embd_batch(embd, n_eval, n_past, 0);
     llama_batch batch = {
         /*n_tokens       =*/ n_tokens,
@@ -136,6 +137,31 @@ int llama_cpp_backend::free_state(std::any state) {
     } catch (const std::bad_any_cast &e) {
         return RWKV_ERROR_BACKEND | RWKV_ERROR_INVALID_PARAMETERS;
     }
+    return RWKV_SUCCESS;
+}
+
+int llama_cpp_backend::load_raw_states(std::vector<std::vector<half_float::half>> states) {
+    clear_state();
+    float * logits;
+    eval(0, logits);
+    llama_memory_recurrent * mem = (llama_memory_recurrent *)llama_get_memory(ctx);
+    for (int i = 0; i < n_layers; i++) {
+        ggml_tensor * r = mem->r_l[i];
+        ggml_tensor * s = mem->s_l[i];
+
+        if (s->ne[0] != hidden_size * (hidden_size / num_heads)) {
+            LOGE("state size mismatch, expected %d, got %d", hidden_size * (hidden_size / num_heads), s->ne[0]);
+            return RWKV_ERROR_BACKEND | RWKV_ERROR_INVALID_PARAMETERS;
+        }
+
+        std::vector<float> state_f32(s->ne[0]);
+        for (int j = 0; j < s->ne[0]; j++) {
+            state_f32[j] = states[i][j];
+        }
+        ggml_backend_tensor_set(s, state_f32.data(), 0, state_f32.size() * sizeof(float));
+        ggml_backend_tensor_memset(r, 0, 0, r->ne[0] * sizeof(float));
+    }
+    LOGI("state loaded");
     return RWKV_SUCCESS;
 }
 

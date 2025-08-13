@@ -69,6 +69,9 @@ public:
     int set_prompt(std::string prompt);
     std::string get_prompt();
 
+    int load_initial_state(std::string state_path);
+    void clear_initial_state();
+
     std::string get_response_buffer_content() { return _response_buffer; }
     const std::vector<int32_t> get_response_buffer_ids() { return _response_buffer_ids; }
     void clear_response_buffer() { _response_buffer = ""; _response_buffer_ids.clear(); }
@@ -393,6 +396,15 @@ private:
     bool _response_buffer_eos_found = false;
 
     void apply_logits_penalties(float * logits, int vocab_size);
+
+    inline void delete_state_node_after(state_node * node) {
+        while (node->next) {
+            auto tmp = node->next->next;
+            _backend->free_state(node->next->state);
+            delete node->next;
+            node->next = tmp;
+        }
+    }
 
 #ifdef ENABLE_VISION
     std::unique_ptr<clip_ctx, std::function<void(clip_ctx*)>> _vision_encoder;
