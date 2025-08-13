@@ -67,6 +67,10 @@ int rwkvmobile_runtime_gen_completion(rwkvmobile_runtime_t runtime, const char *
 
 int rwkvmobile_runtime_clear_state(rwkvmobile_runtime_t runtime);
 
+int rwkvmobile_runtime_load_initial_state(rwkvmobile_runtime_t runtime, const char * state_path);
+
+void rwkvmobile_runtime_clear_initial_state(rwkvmobile_runtime_t runtime);
+
 struct sampler_params rwkvmobile_runtime_get_sampler_params(rwkvmobile_runtime_t runtime);
 
 void rwkvmobile_runtime_set_sampler_params(rwkvmobile_runtime_t runtime, struct sampler_params params);

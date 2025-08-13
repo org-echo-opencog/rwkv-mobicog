@@ -330,6 +330,10 @@ std::string runtime::get_available_backends_str() {
 }
 
 int runtime::load_initial_state(std::string state_path) {
+    if (state_path.find(".rmpack") == std::string::npos) {
+        LOGE("the specified state file is not a rmpack file\n");
+        return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
+    }
     RMPack state_pack(state_path);
     int hidden_size_config = state_pack.getConfig()["hidden_size"];
     auto files = state_pack.getFiles();

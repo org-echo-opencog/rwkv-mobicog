@@ -30,7 +30,7 @@ public:
     virtual double get_prefill_speed() { return -1; }
     virtual double get_decode_speed() { return -1; }
 
-    virtual int load_raw_states(std::vector<std::vector<half_float::half>> states) { return 0; };
+    virtual int load_raw_states(std::vector<std::vector<half_float::half>> states) { return RWKV_ERROR_UNSUPPORTED; };
 
     int get_head_count() { return num_heads; }
     int get_hidden_size() { return hidden_size; }

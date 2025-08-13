@@ -35,6 +35,8 @@ public:
         return prefill_speed;
     }
 
+    int load_raw_states(std::vector<std::vector<half_float::half>> states) override;
+
 private:
     double prefill_speed = -1;
     std::string qnnBackendPath;
