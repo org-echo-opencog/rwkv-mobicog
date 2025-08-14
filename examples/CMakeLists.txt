@@ -56,3 +56,9 @@ endif()
 
 add_executable(test_state_loading test_state_loading.cpp)
 target_link_libraries(test_state_loading PUBLIC rwkv_mobile_internal)
+
+add_executable(quantize_clip quantize_clip.cpp)
+target_link_libraries(quantize_clip PUBLIC rwkv_mobile_internal)
+
+add_executable(benchmark_vision_encoder benchmark_vision_encoder.cpp)
+target_link_libraries(benchmark_vision_encoder PUBLIC rwkv_mobile_internal)
