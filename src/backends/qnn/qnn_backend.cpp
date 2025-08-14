@@ -760,7 +760,7 @@ int qnn_backend::load_model(std::string model_path) {
                     void* buffer = rmpack->mmapFile("lmhead");
 #else
                     void* buffer = rmpack->readFileToMemory("lmhead");
-#endif
+#endif // USE_MMAP
                     external_lmhead_interpretor = MNN::Interpreter::createFromBuffer(buffer, rmpack->getFileInfo("lmhead")->size);
                     MNN::ScheduleConfig conf;
                     conf.type = MNN_FORWARD_CPU;
@@ -770,7 +770,7 @@ int qnn_backend::load_model(std::string model_path) {
                     conf.numThread = cpu_groups[1].ids.size();
 #else
                     conf.numThread = 4;
-#endif
+#endif // __ANDROID__
                     MNN::BackendConfig backendConfig;
                     backendConfig.memory = MNN::BackendConfig::Memory_Low;
                     backendConfig.power = MNN::BackendConfig::Power_High;
@@ -1324,13 +1324,13 @@ int qnn_backend::post_graph_execute(float *& logits) {
         }
     }
 
+#ifndef _WIN32
     if (logitsOutputTensorSize != vocab_size) {
         if (external_lmhead_filetype != "mnn" || external_lmhead_interpretor == nullptr || external_lmhead_mnn_session == nullptr) {
             LOGE("The model requires external lmhead, but external lmhead is not loaded");
             return RWKV_ERROR_IO;
         }
 
-#ifndef _WIN32
         if (external_lmhead_filetype == "mnn") {
             auto input = external_lmhead_interpretor->getSessionInput(external_lmhead_mnn_session, "in");
             if (external_lmhead_input_tensor == nullptr) {
@@ -1349,12 +1349,13 @@ int qnn_backend::post_graph_execute(float *& logits) {
             memcpy(logits_buffer.data(), output_ptr, vocab_size * sizeof(float));
             output->unmap(MNN::Tensor::MAP_TENSOR_READ, output->getDimensionType(), output_ptr);
         } else
-#endif
         {
             LOGE("Unsupported external lmhead filetype: %s", external_lmhead_filetype.c_str());
             return RWKV_ERROR_IO;
         }
-    } else {
+    } else 
+#endif
+    {
         if (RWKV_SUCCESS != copy_qnn_tensor_to_float(logitsOutputTensor, logits_buffer.data(), vocab_size)) {
             return RWKV_ERROR_IO;
         }
