@@ -4,7 +4,6 @@
 #include <chrono>
 #include <any>
 
-#ifdef ENABLE_QNN
 #include "qnn_backend.h"
 #include "commondef.h"
 #include "soc_detect.h"
@@ -19,7 +18,6 @@
 #include <HTP/QnnHtpGraph.h>
 #include <HTP/QnnHtpContext.h>
 #include <QnnContext.h>
-#endif
 
 #include "logger.h"
 #include "half.hpp"
@@ -37,7 +35,6 @@
 
 namespace rwkvmobile {
 
-#ifdef ENABLE_QNN
 using namespace qnn::tools;
 
 static void logCallback(const char* fmt,
@@ -1751,53 +1748,5 @@ int qnn_backend::qnn_set_rpc_latency_and_polling() {
     }
     return RWKV_SUCCESS;
 }
-
-#else
-
-int qnn_backend::init(void * extra) {
-    return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
-}
-
-int qnn_backend::load_model(std::string model_path) {
-    return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
-}
-
-int qnn_backend::eval(int id, float *& logits) {
-    return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
-}
-
-int qnn_backend::eval(std::vector<int> ids, float *& logits, bool skip_logits_copy) {
-    return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
-}
-
-int qnn_backend::clear_state() {
-    return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
-}
-
-int qnn_backend::get_state(std::any &state) {
-    return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
-}
-
-int qnn_backend::set_state(std::any state) {
-    return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
-}
-
-int qnn_backend::free_state(std::any state) {
-    return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
-}
-
-bool qnn_backend::is_available() {
-    return false;
-}
-
-int qnn_backend::release_model() {
-    return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
-}
-
-int qnn_backend::release() {
-    return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
-}
-
-#endif
 
 } // namespace rwkvmobile
