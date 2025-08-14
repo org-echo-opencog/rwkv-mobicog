@@ -21,6 +21,7 @@
 
 #include "logger.h"
 #include "half.hpp"
+#include "soc_detect.h"
 
 #ifdef _WIN32
 #define USE_MMAP 0
@@ -762,16 +763,25 @@ int qnn_backend::load_model(std::string model_path) {
 #endif
                     external_lmhead_interpretor = MNN::Interpreter::createFromBuffer(buffer, rmpack->getFileInfo("lmhead")->size);
                     MNN::ScheduleConfig conf;
+                    conf.type = MNN_FORWARD_CPU;
+#ifdef __ANDROID__
+                    auto cpu_groups = get_cpu_groups();
+                    // use second group
+                    conf.numThread = cpu_groups[1].ids.size();
+#else
+                    conf.numThread = 4;
+#endif
+                    MNN::BackendConfig backendConfig;
+                    backendConfig.memory = MNN::BackendConfig::Memory_Low;
+                    backendConfig.power = MNN::BackendConfig::Power_High;
+                    backendConfig.precision = MNN::BackendConfig::Precision_Low;
+                    conf.backendConfig = &backendConfig;
                     external_lmhead_mnn_session = external_lmhead_interpretor->createSession(conf);
 #if USE_MMAP
                     rmpack->unmapFile("lmhead");
 #else
                     rmpack->freeMemory("lmhead");
 #endif
-                    auto input_tensor = external_lmhead_interpretor->getSessionInput(external_lmhead_mnn_session, "in");
-                    std::vector<int> input_shape = {1, static_cast<int>(hidden_size)};
-                    external_lmhead_interpretor->resizeTensor(input_tensor, input_shape);
-                    external_lmhead_interpretor->resizeSession(external_lmhead_mnn_session);
                 } catch (const std::exception& e) {
                     LOGE("Failed to load external lmhead: %s", e.what());
                     return RWKV_ERROR_MODEL;
@@ -1323,12 +1333,13 @@ int qnn_backend::post_graph_execute(float *& logits) {
 #ifndef _WIN32
         if (external_lmhead_filetype == "mnn") {
             auto input = external_lmhead_interpretor->getSessionInput(external_lmhead_mnn_session, "in");
-            auto nchw_tensor = new MNN::Tensor(input, MNN::Tensor::CAFFE);
-            if (RWKV_SUCCESS != copy_qnn_tensor_to_float(logitsOutputTensor, nchw_tensor->host<float>(), hidden_size)) {
+            if (external_lmhead_input_tensor == nullptr) {
+                external_lmhead_input_tensor = new MNN::Tensor(input, MNN::Tensor::CAFFE);
+            }
+            if (RWKV_SUCCESS != copy_qnn_tensor_to_float(logitsOutputTensor, external_lmhead_input_tensor->host<float>(), hidden_size)) {
                 return RWKV_ERROR_IO;
             }
-            input->copyFromHostTensor(nchw_tensor);
-            delete nchw_tensor;
+            input->copyFromHostTensor(external_lmhead_input_tensor);
 
             external_lmhead_interpretor->runSession(external_lmhead_mnn_session);
 

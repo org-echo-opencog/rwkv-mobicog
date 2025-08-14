@@ -135,6 +135,7 @@ private:
 #ifndef _WIN32
     MNN::Interpreter *external_lmhead_interpretor = nullptr;
     MNN::Session *external_lmhead_mnn_session = nullptr;
+    MNN::Tensor *external_lmhead_input_tensor = nullptr;
 #endif
 
 #ifndef _WIN32
