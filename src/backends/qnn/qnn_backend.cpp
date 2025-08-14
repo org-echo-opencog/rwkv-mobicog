@@ -580,7 +580,7 @@ int qnn_backend::load_model(std::string model_path) {
             for (int i = 0; i < n_chunks; i++) {
                 for (int j = 0; j < graphCounts[i]; j++) {
                     auto graphName = std::string((*graphInfos[i])[j].graphName);
-                    if (graphName.find("ext_embedding_prefill") != std::string::npos) {
+                    if (graphName.find("embedding_prefill") != std::string::npos) {
                         qnnEmbdPrefillGraphsInfo[embd_prefill_gidx] = graphInfoArrEmbdPrefill + embd_prefill_gidx;
                         qnnEmbdPrefillGraphsInfo[embd_prefill_gidx]->graph = (*graphInfos[i])[j].graph;
                         qnnEmbdPrefillGraphsInfo[embd_prefill_gidx]->graphName = strdup((*graphInfos[i])[j].graphName);
@@ -589,7 +589,7 @@ int qnn_backend::load_model(std::string model_path) {
                         qnnEmbdPrefillGraphsInfo[embd_prefill_gidx]->outputTensors = (*graphInfos[i])[j].outputTensors;
                         qnnEmbdPrefillGraphsInfo[embd_prefill_gidx]->numOutputTensors = (*graphInfos[i])[j].numOutputTensors;
                         embd_prefill_gidx++;
-                    } else if (graphName.find("ext_embedding") != std::string::npos) {
+                    } else if (graphName.find("embedding") != std::string::npos) {
                         qnnEmbdGraphsInfo[embd_gidx] = graphInfoArrEmbd + embd_gidx;
                         qnnEmbdGraphsInfo[embd_gidx]->graph = (*graphInfos[i])[j].graph;
                         qnnEmbdGraphsInfo[embd_gidx]->graphName = strdup((*graphInfos[i])[j].graphName);
@@ -696,18 +696,11 @@ int qnn_backend::load_model(std::string model_path) {
         return RWKV_ERROR_MODEL;
     }
 
-    int state_tensor_count = 0;
-    for (int i = 0; i < decodeGraphsTensorNameToTensorPointer.size(); i++) {
-        for (auto &[tensorName, tensor] : decodeGraphsTensorNameToTensorPointer[i]) {
-            if (tensorName.find("state") != std::string::npos && tensorName.find("in") != std::string::npos) {
-                state_tensor_count++;
-            }
-        }
-    }
-    n_layers = state_tensor_count / 3;
-
     std::vector<size_t> dims_state;
-    getTensorDims(dims_state, QNN_TENSOR_GET_DIMENSIONS((Qnn_Tensor_t*)decodeGraphsTensorNameToTensorPointer[0]["state1_in"]), QNN_TENSOR_GET_RANK((Qnn_Tensor_t*)decodeGraphsTensorNameToTensorPointer[0]["state1_in"]));
+
+    n_layers = stateTensorsNameToTensorPointer.size() / 3;
+
+    getTensorDims(dims_state, QNN_TENSOR_GET_DIMENSIONS((Qnn_Tensor_t*)stateTensorsNameToTensorPointer["state1_out"]), QNN_TENSOR_GET_RANK((Qnn_Tensor_t*)stateTensorsNameToTensorPointer["state1_out"]));
     num_heads = dims_state[0];
     hidden_size = num_heads * dims_state[1];
 
@@ -725,6 +718,7 @@ int qnn_backend::load_model(std::string model_path) {
 #ifndef _WIN32
     if (rmpack != nullptr) {
         int use_external_embedding = rmpack->getConfig()["use_external_embedding"];
+        LOGI("use_external_embedding: %d", use_external_embedding);
         if (use_external_embedding) {
             // let's assert that the embedding dtype is the same as the input tensor dtype
             try {
@@ -745,6 +739,12 @@ int qnn_backend::load_model(std::string model_path) {
 #endif
             } catch (const std::exception& e) {
                 LOGE("Failed to load external embedding: %s", e.what());
+                return RWKV_ERROR_MODEL;
+            }
+            if (external_embeddings != nullptr) {
+                LOGI("External embeddings loaded");
+            } else {
+                LOGE("Failed to load external embedding");
                 return RWKV_ERROR_MODEL;
             }
         }
@@ -870,6 +870,8 @@ int qnn_backend::qnn_initialize_tensors() {
                     logitsOutputTensor = (Qnn_Tensor_t*)decodeGraphsTensorNameToTensorPointer[graph_id]["out"];
                 } else if (graph_id == qnnDecodeGraphsCount - 1 && tensorName.find("out_chunk") != std::string::npos) {
                     logitsOutputTensor = (Qnn_Tensor_t*)decodeGraphsTensorNameToTensorPointer[graph_id]["out_chunk" + std::to_string(graph_id+1)];
+                } else if (tensorName.find("state") != std::string::npos) {
+                    stateTensorsNameToTensorPointer[tensorName] = (Qnn_Tensor_t*)decodeGraphsTensorNameToTensorPointer[graph_id][tensorName];
                 }
             }
 
@@ -888,7 +890,7 @@ int qnn_backend::qnn_initialize_tensors() {
                 decodeGraphsTensorNameToSize[graph_id][tensorName] = tensorDataSize;
                 // LOGI("Input Tensor %zu : %s Type: %d Size: %zu", i, tensorName.c_str(), QNN_TENSOR_GET_DATA_TYPE(graphInfo.inputTensors[i]), tensorDataSize);
                 if (tensorName.find("state") != std::string::npos) {
-                    sharedTensorMap[tensorName] = (Qnn_Tensor_t*)decodeGraphsTensorNameToTensorPointer[graph_id][tensorName.substr(0, tensorName.find("_in")) + "_out"];
+                    sharedTensorMap[tensorName] = (Qnn_Tensor_t*)stateTensorsNameToTensorPointer[tensorName.substr(0, tensorName.find("_in")) + "_out"];
                 }
                 if (graph_id > 0) {
                     if (tensorName.find("v_first_in") != std::string::npos) {
@@ -905,25 +907,14 @@ int qnn_backend::qnn_initialize_tensors() {
                 return RWKV_ERROR_IO;
             }
 
-            for (size_t i = 0; i < graphInfo.numOutputTensors; i++) {
-                // fill state tensors with zeros
-                std::vector<size_t> dims;
-                for (int j = 0; j < QNN_TENSOR_GET_RANK(outputTensors[graph_id][i]); j++) {
-                    dims.push_back(*(QNN_TENSOR_GET_DIMENSIONS(outputTensors[graph_id][i]) + j));
-                }
-                void *buffer = qnnIOTensorUtils->getBuffer(&outputTensors[graph_id][i]);
-                auto tensorName = std::string(QNN_TENSOR_GET_NAME(outputTensors[graph_id][i]));
-                int state_num = 0;
-                if (tensorName.find("state") != std::string::npos) {
-                    tensorName = std::stoi(tensorName.substr(0, tensorName.find("_")).substr(5));
-                }
-
-                if (QNN_TENSOR_GET_DATA_TYPE(outputTensors[graph_id][i]) == QNN_DATATYPE_FLOAT_16)
-                    memset(buffer, 0, datautil::calculateElementCount(dims) * sizeof(uint16_t));
-                else if (QNN_TENSOR_GET_DATA_TYPE(outputTensors[graph_id][i]) == QNN_DATATYPE_FLOAT_32)
-                    memset(buffer, 0, datautil::calculateElementCount(dims) * sizeof(float));
-                else {
-                    fill_quantized_tensor(0.0, &outputTensors[graph_id][i]);
+            if (graph_id == 0) {
+                if (decodeGraphsTensorNameToTensorPointer[graph_id].find("in") != decodeGraphsTensorNameToTensorPointer[graph_id].end()) {
+                    tokenInputTensor = (Qnn_Tensor_t*)decodeGraphsTensorNameToTensorPointer[graph_id]["in"];
+                } else if (decodeGraphsTensorNameToTensorPointer[graph_id].find("in_chunk1") != decodeGraphsTensorNameToTensorPointer[graph_id].end()) {
+                    tokenInputTensor = (Qnn_Tensor_t*)decodeGraphsTensorNameToTensorPointer[graph_id]["in_chunk1"];
+                } else {
+                    LOGE("No token input tensor found in graph %d", graph_id);
+                    return RWKV_ERROR_IO;
                 }
             }
         }
@@ -948,7 +939,7 @@ int qnn_backend::qnn_initialize_tensors() {
                     // LOGI("Output Tensor %zu : %s Type: %d Size: %zu", i, tensorName.c_str(), QNN_TENSOR_GET_DATA_TYPE(graphInfo.outputTensors[i]), tensorDataSize);
 
                     if (tensorName.find("state") != std::string::npos) {
-                        sharedTensorMapPrefill[tensorName] = (Qnn_Tensor_t*)decodeGraphsTensorNameToTensorPointer[graph_id][tensorName];
+                        sharedTensorMapPrefill[tensorName] = (Qnn_Tensor_t*)stateTensorsNameToTensorPointer[tensorName];
                     } else if (tensorName == "out_prefill") {
                         sharedTensorMapPrefill[tensorName] = (Qnn_Tensor_t*)decodeGraphsTensorNameToTensorPointer[graph_id]["out"];
                     } else if (graph_id == qnnPrefillGraphsCount - 1 && tensorName.find("out_prefill_chunk") != std::string::npos) {
@@ -971,7 +962,7 @@ int qnn_backend::qnn_initialize_tensors() {
                     // LOGI("Input Tensor %zu : %s Type: %d Size: %zu", i, tensorName.c_str(), QNN_TENSOR_GET_DATA_TYPE(graphInfo.inputTensors[i]), tensorDataSize);
 
                     if (tensorName.find("state") != std::string::npos) {
-                        sharedTensorMapPrefill[tensorName] = (Qnn_Tensor_t*)decodeGraphsTensorNameToTensorPointer[graph_id][tensorName];
+                        sharedTensorMapPrefill[tensorName] = (Qnn_Tensor_t*)stateTensorsNameToTensorPointer[tensorName.substr(0, tensorName.find("_in")) + "_out"];
                     }
 
                     if (graph_id > 0) {
@@ -1028,13 +1019,15 @@ int qnn_backend::qnn_initialize_tensors() {
                     }
                     tensorDataSize *= typeSize;
                     embdGraphsTensorNameToSize[graph_id][tensorName] = tensorDataSize;
-                    // LOGI("Output Tensor %zu : %s Type: %d Size: %zu", i, tensorName.c_str(), QNN_TENSOR_GET_DATA_TYPE(graphInfo.outputTensors[i]), tensorDataSize);
+                    LOGI("Output Tensor %zu : %s Type: %d Size: %zu", i, tensorName.c_str(), QNN_TENSOR_GET_DATA_TYPE(graphInfo.outputTensors[i]), tensorDataSize);
 
                     if (qnnDecodeGraphsCount > 0) {
                         if (tensorName.find("state") != std::string::npos) {
-                            sharedTensorMapEmbd[tensorName] = (Qnn_Tensor_t*)decodeGraphsTensorNameToTensorPointer[graph_id][tensorName];
+                            sharedTensorMapEmbd[tensorName] = (Qnn_Tensor_t*)stateTensorsNameToTensorPointer[tensorName];
                         } else if (tensorName == "out") {
                             sharedTensorMapEmbd[tensorName] = (Qnn_Tensor_t*)decodeGraphsTensorNameToTensorPointer[graph_id]["out"];
+                        } else if (tensorName == "in_embedding_chunk" + std::to_string(graph_id + 1)) {
+                            sharedTensorMapEmbd[tensorName] = (Qnn_Tensor_t*)decodeGraphsTensorNameToTensorPointer[graph_id]["in_chunk" + std::to_string(graph_id + 1)];
                         }
                     }
                 }
@@ -1044,6 +1037,17 @@ int qnn_backend::qnn_initialize_tensors() {
                                             embdGraphsTensorNameToSize[graph_id], qnnContextHandles[graph_id], false)) {
                         LOGE("Error in setting up Output Tensors");
                         return RWKV_ERROR_IO;
+                    }
+
+                    for (size_t i = 0; i < graphInfo.numOutputTensors; i++) {
+                        auto tensorName = std::string(QNN_TENSOR_GET_NAME(graphInfo.outputTensors[i]));
+                        if (tensorName == "out") {
+                            logitsOutputTensor = (Qnn_Tensor_t*)embdGraphsTensorNameToTensorPointer[graph_id]["out"];
+                        } else if (graph_id == qnnEmbdGraphsCount - 1 && tensorName.find("out_chunk") != std::string::npos) {
+                            logitsOutputTensor = (Qnn_Tensor_t*)embdGraphsTensorNameToTensorPointer[graph_id]["out_chunk" + std::to_string(graph_id+1)];
+                        } else if (tensorName.find("state") != std::string::npos) {
+                            stateTensorsNameToTensorPointer[tensorName] = (Qnn_Tensor_t*)embdGraphsTensorNameToTensorPointer[graph_id][tensorName];
+                        }
                     }
                 }
 
@@ -1060,13 +1064,16 @@ int qnn_backend::qnn_initialize_tensors() {
                     tensorDataSize *= typeSize;
                     embdGraphsTensorNameToSize[graph_id][tensorName] = tensorDataSize;
                     // LOGI("Input Tensor %zu : %s Type: %d Size: %zu", i, tensorName.c_str(), QNN_TENSOR_GET_DATA_TYPE(graphInfo.inputTensors[i]), tensorDataSize);
-                    if (qnnDecodeGraphsCount > 0) {
-                        if (tensorName.find("state") != std::string::npos) {
-                            sharedTensorMapEmbd[tensorName] = (Qnn_Tensor_t*)decodeGraphsTensorNameToTensorPointer[graph_id][tensorName];
-                        }
-                    } else {
-                        if (tensorName.find("state") != std::string::npos) {
-                            sharedTensorMapEmbd[tensorName] = (Qnn_Tensor_t*)embdGraphsTensorNameToTensorPointer[graph_id][tensorName];
+
+                    if (tensorName.find("state") != std::string::npos) {
+                        sharedTensorMapEmbd[tensorName] = (Qnn_Tensor_t*)stateTensorsNameToTensorPointer[tensorName.substr(0, tensorName.find("_in")) + "_out"];
+                    }
+
+                    if (qnnDecodeGraphsCount == 0 && graph_id > 0) {
+                        if (tensorName.find("v_first_in") != std::string::npos) {
+                            sharedTensorMapEmbd[tensorName] = (Qnn_Tensor_t*)embdGraphsTensorNameToTensorPointer[0]["v_first_out_chunk1"];
+                        } else if (tensorName == "in_chunk" + std::to_string(graph_id + 1)) {
+                            sharedTensorMapEmbd[tensorName] = (Qnn_Tensor_t*)embdGraphsTensorNameToTensorPointer[graph_id - 1]["out_chunk" + std::to_string(graph_id)];
                         }
                     }
                 }
@@ -1089,6 +1096,8 @@ int qnn_backend::qnn_initialize_tensors() {
             Qnn_Tensor_t *tensor = nullptr;
             if (embdGraphsTensorNameToTensorPointer[0].find("in_embedding") != embdGraphsTensorNameToTensorPointer[0].end()) {
                 tensor = (Qnn_Tensor_t*)embdGraphsTensorNameToTensorPointer[0]["in_embedding"];
+            } else if (embdGraphsTensorNameToTensorPointer[0].find("in_embedding_chunk1") != embdGraphsTensorNameToTensorPointer[0].end()) {
+                tensor = (Qnn_Tensor_t*)embdGraphsTensorNameToTensorPointer[0]["in_embedding_chunk1"];
             }
             tokenInputTensorEmbd = tensor;
         }
@@ -1110,12 +1119,16 @@ int qnn_backend::qnn_initialize_tensors() {
                     }
                     tensorDataSize *= typeSize;
                     embdPrefillGraphsTensorNameToSize[graph_id][tensorName] = tensorDataSize;
-                    // LOGI("Output Tensor %zu : %s Type: %d Size: %zu", i, tensorName.c_str(), QNN_TENSOR_GET_DATA_TYPE(graphInfo.outputTensors[i]), tensorDataSize);
+                    LOGI("Output Tensor %zu : %s Type: %d Size: %zu", i, tensorName.c_str(), QNN_TENSOR_GET_DATA_TYPE(graphInfo.outputTensors[i]), tensorDataSize);
 
                     if (tensorName.find("state") != std::string::npos) {
-                        sharedTensorMapEmbdPrefill[tensorName] = (Qnn_Tensor_t*)decodeGraphsTensorNameToTensorPointer[graph_id][tensorName];
-                    } else if (tensorName == "out_prefill") {
-                        sharedTensorMapEmbdPrefill[tensorName] = (Qnn_Tensor_t*)decodeGraphsTensorNameToTensorPointer[graph_id]["out"];
+                        sharedTensorMapEmbdPrefill[tensorName] = (Qnn_Tensor_t*)stateTensorsNameToTensorPointer[tensorName];
+                    }
+
+                    if (tensorName == "out_prefill") {
+                        sharedTensorMapEmbdPrefill[tensorName] = logitsOutputTensor;
+                    } else if (graph_id == qnnEmbdPrefillGraphsCount - 1 && tensorName == "out_prefill_chunk" + std::to_string(graph_id + 1)) {
+                        sharedTensorMapEmbdPrefill[tensorName] = logitsOutputTensor;
                     }
                 }
 
@@ -1134,9 +1147,16 @@ int qnn_backend::qnn_initialize_tensors() {
                     // LOGI("Input Tensor %zu : %s Type: %d Size: %zu", i, tensorName.c_str(), QNN_TENSOR_GET_DATA_TYPE(graphInfo.inputTensors[i]), tensorDataSize);
 
                     if (tensorName.find("state") != std::string::npos) {
-                        sharedTensorMapEmbdPrefill[tensorName] = (Qnn_Tensor_t*)decodeGraphsTensorNameToTensorPointer[graph_id][tensorName];
+                        sharedTensorMapEmbdPrefill[tensorName] = (Qnn_Tensor_t*)stateTensorsNameToTensorPointer[tensorName.substr(0, tensorName.find("_in")) + "_out"];
                     }
 
+                    if (qnnDecodeGraphsCount == 0 && graph_id > 0) {
+                        if (tensorName.find("v_first_in") != std::string::npos) {
+                            sharedTensorMapEmbdPrefill[tensorName] = (Qnn_Tensor_t*)embdPrefillGraphsTensorNameToTensorPointer[0]["v_first_out_prefill_chunk1"];
+                        } else if (tensorName == "in_prefill_chunk" + std::to_string(graph_id + 1)) {
+                            sharedTensorMapEmbdPrefill[tensorName] = (Qnn_Tensor_t*)embdPrefillGraphsTensorNameToTensorPointer[graph_id - 1]["out_prefill_chunk" + std::to_string(graph_id)];
+                        }
+                    }
                 }
 
                 if (!qnnIOTensorUtils->setupOutputWithSharedTensors(&outputTensorsEmbdPrefill[graph_id], embdPrefillGraphsTensorNameToTensorPointer[graph_id], graphInfo,
@@ -1156,6 +1176,8 @@ int qnn_backend::qnn_initialize_tensors() {
             Qnn_Tensor_t *tensor = nullptr;
             if (embdPrefillGraphsTensorNameToTensorPointer[0].find("in_embedding_prefill") != embdPrefillGraphsTensorNameToTensorPointer[0].end()) {
                 tensor = (Qnn_Tensor_t*)embdPrefillGraphsTensorNameToTensorPointer[0]["in_embedding_prefill"];
+            } else if (embdPrefillGraphsTensorNameToTensorPointer[0].find("in_embedding_prefill_chunk1") != embdPrefillGraphsTensorNameToTensorPointer[0].end()) {
+                tensor = (Qnn_Tensor_t*)embdPrefillGraphsTensorNameToTensorPointer[0]["in_embedding_prefill_chunk1"];
             }
             if (QNN_TENSOR_GET_RANK(tensor) == 2) {
                 embdPrefillSequenceLength = *(QNN_TENSOR_GET_DIMENSIONS(tensor));
@@ -1167,8 +1189,166 @@ int qnn_backend::qnn_initialize_tensors() {
         }
 
         isTensorInitialized = true;
+
+        clear_state();
     }
 
+    return RWKV_SUCCESS;
+}
+
+int qnn_backend::copy_float_to_qnn_tensor(Qnn_Tensor_t *qnn_tensor, const float *buffer, size_t element_count) {
+    if (qnn_tensor == nullptr) {
+        LOGE("%s: qnn_tensor is nullptr", __func__);
+        return RWKV_ERROR_IO;
+    }
+
+    std::vector<size_t> dims;
+    getTensorDims(dims, QNN_TENSOR_GET_DIMENSIONS(qnn_tensor), QNN_TENSOR_GET_RANK(qnn_tensor));
+    if (datautil::calculateElementCount(dims) < element_count) {
+        LOGE("%s: The element count is larger than the tensor size, tensor = %s", __func__, QNN_TENSOR_GET_NAME(qnn_tensor));
+        return RWKV_ERROR_IO;
+    }
+
+    void *qnn_buffer = qnnIOTensorUtils->getBuffer(qnn_tensor);
+    if (QNN_TENSOR_GET_DATA_TYPE(qnn_tensor) == QNN_DATATYPE_FLOAT_32) {
+        memcpy(qnn_buffer, buffer, element_count * sizeof(float));
+    } else if (QNN_TENSOR_GET_DATA_TYPE(qnn_tensor) == QNN_DATATYPE_FLOAT_16) {
+        half_float::half *ptr = (half_float::half*)qnn_buffer;
+        for (int j = 0; j < element_count; j++) {
+            ptr[j] = (half_float::half)(buffer[j]);
+        }
+    } else if (QNN_TENSOR_GET_DATA_TYPE(qnn_tensor) == QNN_DATATYPE_UFIXED_POINT_16) {
+        datautil::floatToTfN<uint16_t>(reinterpret_cast<uint16_t*>(qnn_buffer), (float*)(buffer),
+                QNN_TENSOR_GET_QUANT_PARAMS(tokenInputTensorEmbdPrefill).scaleOffsetEncoding.offset,
+                QNN_TENSOR_GET_QUANT_PARAMS(tokenInputTensorEmbdPrefill).scaleOffsetEncoding.scale,
+                element_count);
+    } else {
+        LOGE("%s: Unsupported data type", __func__);
+        return RWKV_ERROR_IO;
+    }
+    return RWKV_SUCCESS;
+}
+
+int qnn_backend::copy_qnn_tensor_to_float(Qnn_Tensor_t *qnn_tensor, float *buffer, size_t element_count) {
+    if (qnn_tensor == nullptr) {
+        LOGE("%s: qnn_tensor is nullptr", __func__);
+        return RWKV_ERROR_IO;
+    }
+
+    std::vector<size_t> dims;
+    getTensorDims(dims, QNN_TENSOR_GET_DIMENSIONS(qnn_tensor), QNN_TENSOR_GET_RANK(qnn_tensor));
+    if (datautil::calculateElementCount(dims) < element_count) {
+        LOGE("%s: The element count is larger than the tensor size, tensor = %s", __func__, QNN_TENSOR_GET_NAME(qnn_tensor));
+        return RWKV_ERROR_IO;
+    }
+
+    void *qnn_buffer = qnnIOTensorUtils->getBuffer(qnn_tensor);
+    if (qnn_buffer == nullptr) {
+        LOGE("%s: Failed to get buffer for tensor %s", __func__, QNN_TENSOR_GET_NAME(qnn_tensor));
+        return RWKV_ERROR_IO;
+    }
+
+    if (QNN_TENSOR_GET_DATA_TYPE(qnn_tensor) == QNN_DATATYPE_FLOAT_32) {
+        memcpy(buffer, qnn_buffer, element_count * sizeof(float));
+    } else if (QNN_TENSOR_GET_DATA_TYPE(qnn_tensor) == QNN_DATATYPE_FLOAT_16) {
+        half_float::half *ptr = (half_float::half*)qnn_buffer;
+        for (int i = 0; i < element_count; i++) {
+            buffer[i] = ptr[i];
+        }
+    } else if (QNN_TENSOR_GET_DATA_TYPE(qnn_tensor) == QNN_DATATYPE_UFIXED_POINT_16) {
+        datautil::tfNToFloat<uint16_t>(buffer, reinterpret_cast<uint16_t*>(qnn_buffer),
+            QNN_TENSOR_GET_QUANT_PARAMS(qnn_tensor).scaleOffsetEncoding.offset,
+            QNN_TENSOR_GET_QUANT_PARAMS(qnn_tensor).scaleOffsetEncoding.scale,
+            element_count);
+    } else {
+        LOGE("%s: Unsupported data type", __func__);
+        return RWKV_ERROR_IO;
+    }
+    return RWKV_SUCCESS;
+}
+
+int qnn_backend::execute_graph(GraphInfo_t** graphsInfo, int graphsCount, Qnn_Tensor_t** inputTensors, Qnn_Tensor_t** outputTensors) {
+    for (int graph_id = 0; graph_id < graphsCount; graph_id++) {
+        auto graphInfo     = (*graphsInfo)[graph_id];
+        auto executeStatus =
+            qnnFunctionPointers.qnnInterface.graphExecute(graphInfo.graph,
+                                                            inputTensors[graph_id],
+                                                            graphInfo.numInputTensors,
+                                                            outputTensors[graph_id],
+                                                            graphInfo.numOutputTensors,
+                                                            nullptr, nullptr);
+        if (QNN_GRAPH_NO_ERROR != executeStatus) {
+            return RWKV_ERROR_EVAL;
+        }
+    }
+    return RWKV_SUCCESS;
+}
+
+int qnn_backend::execute_decode_graph() {
+    return execute_graph(qnnDecodeGraphsInfo, qnnDecodeGraphsCount, inputTensors, outputTensors);
+}
+
+int qnn_backend::execute_prefill_graph() {
+    return execute_graph(qnnPrefillGraphsInfo, qnnPrefillGraphsCount, inputTensorsPrefill, outputTensorsPrefill);
+}
+
+int qnn_backend::execute_emb_decode_graph() {
+    return execute_graph(qnnEmbdGraphsInfo, qnnEmbdGraphsCount, inputTensorsEmbd, outputTensorsEmbd);
+}
+
+int qnn_backend::execute_emb_prefill_graph() {
+    return execute_graph(qnnEmbdPrefillGraphsInfo, qnnEmbdPrefillGraphsCount, inputTensorsEmbdPrefill, outputTensorsEmbdPrefill);
+}
+
+int qnn_backend::post_graph_execute(float *& logits) {
+    if (logits_buffer.empty()) {
+        logits_buffer.resize(vocab_size);
+    }
+
+    if (logitsOutputTensorSize == 0) {
+        std::vector<size_t> dims;
+        getTensorDims(dims, QNN_TENSOR_GET_DIMENSIONS(logitsOutputTensor), QNN_TENSOR_GET_RANK(logitsOutputTensor));
+        logitsOutputTensorSize = 1;
+        for (auto dim : dims) {
+            logitsOutputTensorSize *= dim;
+        }
+    }
+
+    if (logitsOutputTensorSize != vocab_size) {
+        if (external_lmhead_filetype != "mnn" || external_lmhead_interpretor == nullptr || external_lmhead_mnn_session == nullptr) {
+            LOGE("The model requires external lmhead, but external lmhead is not loaded");
+            return RWKV_ERROR_IO;
+        }
+
+#ifndef _WIN32
+        if (external_lmhead_filetype == "mnn") {
+            auto input = external_lmhead_interpretor->getSessionInput(external_lmhead_mnn_session, "in");
+            auto nchw_tensor = new MNN::Tensor(input, MNN::Tensor::CAFFE);
+            if (RWKV_SUCCESS != copy_qnn_tensor_to_float(logitsOutputTensor, nchw_tensor->host<float>(), hidden_size)) {
+                return RWKV_ERROR_IO;
+            }
+            input->copyFromHostTensor(nchw_tensor);
+            delete nchw_tensor;
+
+            external_lmhead_interpretor->runSession(external_lmhead_mnn_session);
+
+            auto output = external_lmhead_interpretor->getSessionOutput(external_lmhead_mnn_session, "out");
+            void *output_ptr = output->map(MNN::Tensor::MAP_TENSOR_READ, output->getDimensionType());
+
+            memcpy(logits_buffer.data(), output_ptr, vocab_size * sizeof(float));
+            output->unmap(MNN::Tensor::MAP_TENSOR_READ, output->getDimensionType(), output_ptr);
+        } else
+#endif
+        {
+            LOGE("Unsupported external lmhead filetype: %s", external_lmhead_filetype.c_str());
+            return RWKV_ERROR_IO;
+        }
+    } else {
+        if (RWKV_SUCCESS != copy_qnn_tensor_to_float(logitsOutputTensor, logits_buffer.data(), vocab_size)) {
+            return RWKV_ERROR_IO;
+        }
+    }
+    logits = logits_buffer.data();
     return RWKV_SUCCESS;
 }
 
@@ -1177,113 +1357,135 @@ int qnn_backend::eval(int id, float *& logits) {
         LOGD("qnn_backend::eval() isTensorInitialized: %d", isTensorInitialized);
         return RWKV_ERROR_EVAL;
     }
-    int *token_input = (int*)qnnIOTensorUtils->getBuffer(&inputTensors[0][0]);
-    *token_input = id;
 
-    for (int graph_id = 0; graph_id < qnnDecodeGraphsCount; graph_id++) {
-        auto graphInfo     = (*qnnDecodeGraphsInfo)[graph_id];
-        auto executeStatus =
-            qnnFunctionPointers.qnnInterface.graphExecute(graphInfo.graph,
-                                                            inputTensors[graph_id],
-                                                            graphInfo.numInputTensors,
-                                                            outputTensors[graph_id],
-                                                            graphInfo.numOutputTensors,
-                                                            nullptr,
-                                                            nullptr);
-
-        if (QNN_GRAPH_NO_ERROR != executeStatus) {
+    if (tokenInputTensor == nullptr) {
+        if (external_embeddings == nullptr) {
+            LOGE("The model requires external embeddings, but external embeddings are not loaded");
             return RWKV_ERROR_IO;
         }
-    }
 
-    // copy logits
-    if (logits_buffer.empty()) logits_buffer.resize(vocab_size);
-    void *buffer = qnnIOTensorUtils->getBuffer(logitsOutputTensor);
-
-    if (QNN_TENSOR_GET_DATA_TYPE(logitsOutputTensor) == QNN_DATATYPE_FLOAT_32) {
-        logits = (float*)buffer;
-    } else if (QNN_TENSOR_GET_DATA_TYPE(logitsOutputTensor) == QNN_DATATYPE_FLOAT_16) {
-        half_float::half *ptr = (half_float::half*)buffer;
-        for (int i = 0; i < vocab_size; i++) {
-            logits_buffer[i] = ptr[i];
+        if (tokenInputTensorEmbd == nullptr) {
+            LOGE("tokenInputTensorEmbd is not set");
+            return RWKV_ERROR_IO;
         }
-        logits = logits_buffer.data();
-    } else if (QNN_TENSOR_GET_DATA_TYPE(logitsOutputTensor) == QNN_DATATYPE_UFIXED_POINT_16) {
-        datautil::tfNToFloat<uint16_t>(logits_buffer.data(), reinterpret_cast<uint16_t*>(buffer),
-            QNN_TENSOR_GET_QUANT_PARAMS(logitsOutputTensor).scaleOffsetEncoding.offset,
-            QNN_TENSOR_GET_QUANT_PARAMS(logitsOutputTensor).scaleOffsetEncoding.scale,
-            vocab_size);
-        logits = logits_buffer.data();
+
+        // assume that the external_embeddings has elementsize = 2
+        void *buffer = qnnIOTensorUtils->getBuffer(tokenInputTensorEmbd);
+        if (buffer == nullptr) {
+            LOGE("Failed to get tokenInputTensorEmbd");
+            return RWKV_ERROR_IO;
+        }
+        uint16_t *emb_ptr = (uint16_t*)external_embeddings.get();
+        memcpy(buffer, emb_ptr + hidden_size * id, hidden_size * sizeof(uint16_t));
+
+        if (RWKV_SUCCESS != execute_emb_decode_graph()) {
+            return RWKV_ERROR_EVAL;
+        }
     } else {
-        LOGE("Unsupported data type");
-        return RWKV_ERROR_IO;
+        int *token_input = (int*)qnnIOTensorUtils->getBuffer(tokenInputTensor);
+        if (token_input == nullptr) {
+            LOGE("Failed to get tokenInputTensor");
+            return RWKV_ERROR_IO;
+        }
+        *token_input = id;
+
+        if (RWKV_SUCCESS != execute_decode_graph()) {
+            return RWKV_ERROR_EVAL;
+        }
     }
 
-    return RWKV_SUCCESS;
+    return post_graph_execute(logits);
 }
 
 int qnn_backend::eval(std::vector<int> ids, float *& logits, bool skip_logits_copy) {
     if (ids.empty()) return RWKV_ERROR_EVAL;
-    if (prefillSequenceLength == 0) {
-        for (auto id : ids) {
-            if (RWKV_SUCCESS != eval(id, logits)) {
-                return RWKV_ERROR_MODEL;
+
+    if (tokenInputTensor == nullptr) {
+        if (external_embeddings == nullptr) {
+            LOGE("The model requires external embeddings, but external embeddings are not loaded");
+            return RWKV_ERROR_IO;
+        }
+
+        if (tokenInputTensorEmbd == nullptr) {
+            LOGE("tokenInputTensorEmbd is not set");
+            return RWKV_ERROR_IO;
+        }
+
+        int idx = 0;
+        for (; idx + embdPrefillSequenceLength <= ids.size(); idx += embdPrefillSequenceLength) {
+            uint16_t *buffer = (uint16_t*)qnnIOTensorUtils->getBuffer(tokenInputTensorEmbdPrefill);
+            if (buffer == nullptr) {
+                LOGE("Failed to get tokenInputTensorEmbdPrefill");
+                return RWKV_ERROR_IO;
+            }
+            uint16_t *emb_ptr = (uint16_t*)external_embeddings.get();
+            for (int i = 0; i < embdPrefillSequenceLength; i++) {
+                memcpy(buffer + i * hidden_size, emb_ptr + hidden_size * ids[idx + i], hidden_size * sizeof(uint16_t));
+            }
+
+            if (RWKV_SUCCESS != execute_emb_prefill_graph()) {
+                return RWKV_ERROR_EVAL;
+            }
+        }
+
+        for (; idx < ids.size(); idx++) {
+            uint16_t *buffer = (uint16_t*)qnnIOTensorUtils->getBuffer(tokenInputTensorEmbd);
+            if (buffer == nullptr) {
+                LOGE("Failed to get tokenInputTensorEmbd");
+                return RWKV_ERROR_IO;
+            }
+            uint16_t *emb_ptr = (uint16_t*)external_embeddings.get();
+            memcpy(buffer, emb_ptr + hidden_size * ids[idx], hidden_size * sizeof(uint16_t));
+
+            if (RWKV_SUCCESS != execute_emb_decode_graph()) {
+                return RWKV_ERROR_EVAL;
             }
         }
     } else {
-        int *token_input = (int*)qnnIOTensorUtils->getBuffer(tokenInputTensorPrefill);
-        int idx = 0;
-
-        bool is_prefilling_usable = true;
-        auto start = std::chrono::high_resolution_clock::now();
-        for (; (idx + prefillSequenceLength) <= ids.size(); idx += prefillSequenceLength) {
-            for (int i = 0; i < prefillSequenceLength; i++) {
-                token_input[i] = ids[idx + i];
+        if (prefillSequenceLength == 0) {
+            for (auto id : ids) {
+                if (RWKV_SUCCESS != eval(id, logits)) {
+                    return RWKV_ERROR_MODEL;
+                }
             }
-            // LOGD("Prefilling using seq mode from %d to %d", idx, idx + prefillSequenceLength);
+        } else {
+            int *token_input = (int*)qnnIOTensorUtils->getBuffer(tokenInputTensorPrefill);
+            if (token_input == nullptr) {
+                LOGE("Failed to get tokenInputTensorPrefill");
+                return RWKV_ERROR_IO;
+            }
+            int idx = 0;
 
-            for (int graph_id = 0; graph_id < qnnPrefillGraphsCount; graph_id++) {
-                auto graphInfo     = (*qnnPrefillGraphsInfo)[graph_id];
-                auto executeStatus =
-                    qnnFunctionPointers.qnnInterface.graphExecute(graphInfo.graph,
-                                                                    inputTensorsPrefill[graph_id],
-                                                                    graphInfo.numInputTensors,
-                                                                    outputTensorsPrefill[graph_id],
-                                                                    graphInfo.numOutputTensors,
-                                                                    nullptr,
-                                                                    nullptr);
+            bool is_prefilling_usable = true;
+            auto start = std::chrono::high_resolution_clock::now();
+            for (; (idx + prefillSequenceLength) <= ids.size(); idx += prefillSequenceLength) {
+                for (int i = 0; i < prefillSequenceLength; i++) {
+                    token_input[i] = ids[idx + i];
+                }
+                // LOGD("Prefilling using seq mode from %d to %d", idx, idx + prefillSequenceLength);
 
-                if (QNN_GRAPH_NO_ERROR != executeStatus) {
+                if (RWKV_SUCCESS != execute_prefill_graph()) {
                     is_prefilling_usable = false;
                     LOGE("QNN: prefill graph not usable; falling back to decode mode");
+                }
+                if (!is_prefilling_usable) {
                     break;
                 }
             }
-            if (!is_prefilling_usable) {
-                break;
-            }
-        }
 
-        auto end = std::chrono::high_resolution_clock::now();
-        prefill_speed = (ids.size() / prefillSequenceLength * prefillSequenceLength) * 1000000.0 / std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+            auto end = std::chrono::high_resolution_clock::now();
+            prefill_speed = (ids.size() / prefillSequenceLength * prefillSequenceLength) * 1000000.0 / std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
 
-        // LOGD("Prefilling tails using decode mode from %d to %d", idx, ids.size());
-        for (; idx < ids.size(); idx++) {
-            token_input = (int*)qnnIOTensorUtils->getBuffer(&inputTensors[0][0]);
-            *token_input = ids[idx];
-            for (int graph_id = 0; graph_id < qnnDecodeGraphsCount; graph_id++) {
-                auto graphInfo     = (*qnnDecodeGraphsInfo)[graph_id];
-                auto executeStatus =
-                    qnnFunctionPointers.qnnInterface.graphExecute(graphInfo.graph,
-                                                                    inputTensors[graph_id],
-                                                                    graphInfo.numInputTensors,
-                                                                    outputTensors[graph_id],
-                                                                    graphInfo.numOutputTensors,
-                                                                    nullptr,
-                                                                    nullptr);
-
-                if (QNN_GRAPH_NO_ERROR != executeStatus) {
+            // LOGD("Prefilling tails using decode mode from %d to %d", idx, ids.size());
+            for (; idx < ids.size(); idx++) {
+                token_input = (int*)qnnIOTensorUtils->getBuffer(tokenInputTensor);
+                if (token_input == nullptr) {
+                    LOGE("Failed to get tokenInputTensor");
                     return RWKV_ERROR_IO;
+                }
+                *token_input = ids[idx];
+                if (RWKV_SUCCESS != execute_decode_graph()) {
+                    return RWKV_ERROR_EVAL;
                 }
             }
         }
@@ -1291,27 +1493,7 @@ int qnn_backend::eval(std::vector<int> ids, float *& logits, bool skip_logits_co
 
     // copy logits
     if (!skip_logits_copy) {
-        if (logits_buffer.empty()) logits_buffer.resize(vocab_size);
-        void *buffer = qnnIOTensorUtils->getBuffer(logitsOutputTensor);
-
-        if (QNN_TENSOR_GET_DATA_TYPE(logitsOutputTensor) == QNN_DATATYPE_FLOAT_32) {
-            logits = (float*)buffer;
-        } else if (QNN_TENSOR_GET_DATA_TYPE(logitsOutputTensor) == QNN_DATATYPE_FLOAT_16) {
-            half_float::half *ptr = (half_float::half*)buffer;
-            for (int i = 0; i < vocab_size; i++) {
-                logits_buffer[i] = ptr[i];
-            }
-            logits = logits_buffer.data();
-        } else if (QNN_TENSOR_GET_DATA_TYPE(logitsOutputTensor) == QNN_DATATYPE_UFIXED_POINT_16) {
-            datautil::tfNToFloat<uint16_t>(logits_buffer.data(), reinterpret_cast<uint16_t*>(buffer),
-                QNN_TENSOR_GET_QUANT_PARAMS(logitsOutputTensor).scaleOffsetEncoding.offset,
-                QNN_TENSOR_GET_QUANT_PARAMS(logitsOutputTensor).scaleOffsetEncoding.scale,
-                vocab_size);
-            logits = logits_buffer.data();
-        } else {
-            LOGE("Unsupported data type");
-            return RWKV_ERROR_IO;
-        }
+        return post_graph_execute(logits);
     }
     return RWKV_SUCCESS;
 }
@@ -1322,95 +1504,32 @@ int qnn_backend::eval_with_embeddings(const float *embeddings, int n_tokens, flo
 
     int i = 0;
     if (embdPrefillSequenceLength > 0) {
-        void *embedding_input_prefill = qnnIOTensorUtils->getBuffer(tokenInputTensorEmbdPrefill);
         for (; i + embdPrefillSequenceLength <= n_tokens; i += embdPrefillSequenceLength) {
-            if (QNN_TENSOR_GET_DATA_TYPE(tokenInputTensorEmbdPrefill) == QNN_DATATYPE_FLOAT_32) {
-                memcpy(embedding_input_prefill, (float*)(embeddings + i * hidden_size), embdPrefillSequenceLength * hidden_size * sizeof(float));
-            } else if (QNN_TENSOR_GET_DATA_TYPE(tokenInputTensorEmbdPrefill) == QNN_DATATYPE_FLOAT_16) {
-                half_float::half *ptr = (half_float::half*)embedding_input_prefill;
-                for (int j = 0; j < embdPrefillSequenceLength * hidden_size; j++) {
-                    ptr[j] = (half_float::half)(embeddings[i * hidden_size + j]);
-                }
-            } else if (QNN_TENSOR_GET_DATA_TYPE(tokenInputTensorEmbdPrefill) == QNN_DATATYPE_UFIXED_POINT_16) {
-                datautil::floatToTfN<uint16_t>(reinterpret_cast<uint16_t*>(embedding_input_prefill), (float*)(embeddings + i * hidden_size),
-                        QNN_TENSOR_GET_QUANT_PARAMS(tokenInputTensorEmbdPrefill).scaleOffsetEncoding.offset,
-                        QNN_TENSOR_GET_QUANT_PARAMS(tokenInputTensorEmbdPrefill).scaleOffsetEncoding.scale,
-                        embdPrefillSequenceLength * hidden_size);
-            } else {
-                LOGE("Unsupported data type");
+            if (RWKV_SUCCESS != copy_float_to_qnn_tensor(tokenInputTensorEmbdPrefill, embeddings + i * hidden_size, embdPrefillSequenceLength * hidden_size)) {
+                LOGE("Failed to copy embeddings to tokenInputTensorEmbdPrefill");
                 return RWKV_ERROR_IO;
             }
 
-            auto graphInfo = (*qnnEmbdPrefillGraphsInfo)[0];
-            auto executeStatus =
-                qnnFunctionPointers.qnnInterface.graphExecute(graphInfo.graph,
-                                                                inputTensorsEmbdPrefill[0],
-                                                                graphInfo.numInputTensors,
-                                                                outputTensorsEmbdPrefill[0],
-                                                                graphInfo.numOutputTensors,
-                                                                nullptr, nullptr);
-            if (QNN_GRAPH_NO_ERROR != executeStatus) {
-                return RWKV_ERROR_IO;
+            if (RWKV_SUCCESS != execute_emb_prefill_graph()) {
+                return RWKV_ERROR_EVAL;
             }
         }
     }
 
     // leftovers
     for (; i < n_tokens; i++) {
-        void *embedding_input = qnnIOTensorUtils->getBuffer(tokenInputTensorEmbd);
-        if (QNN_TENSOR_GET_DATA_TYPE(tokenInputTensorEmbd) == QNN_DATATYPE_FLOAT_32) {
-            memcpy(embedding_input, (float*)(embeddings + i * hidden_size), hidden_size * sizeof(float));
-        } else if (QNN_TENSOR_GET_DATA_TYPE(tokenInputTensorEmbd) == QNN_DATATYPE_FLOAT_16) {
-            half_float::half *ptr = (half_float::half*)embedding_input;
-            for (int j = 0; j < hidden_size; j++) {
-                ptr[j] = (half_float::half)(embeddings[i * hidden_size + j]);
-            }
-        } else if (QNN_TENSOR_GET_DATA_TYPE(tokenInputTensorEmbd) == QNN_DATATYPE_UFIXED_POINT_16) {
-            datautil::floatToTfN<uint16_t>(reinterpret_cast<uint16_t*>(embedding_input), (float*)(embeddings + i * hidden_size),
-                    QNN_TENSOR_GET_QUANT_PARAMS(tokenInputTensorEmbd).scaleOffsetEncoding.offset,
-                    QNN_TENSOR_GET_QUANT_PARAMS(tokenInputTensorEmbd).scaleOffsetEncoding.scale,
-                    hidden_size);
-        } else {
-            LOGE("Unsupported data type");
+        if (RWKV_SUCCESS != copy_float_to_qnn_tensor(tokenInputTensorEmbd, embeddings + i * hidden_size, hidden_size)) {
             return RWKV_ERROR_IO;
         }
 
-        auto graphInfo = (*qnnEmbdGraphsInfo)[0];
-        auto executeStatus =
-            qnnFunctionPointers.qnnInterface.graphExecute(graphInfo.graph,
-                                                            inputTensorsEmbd[0],
-                                                            graphInfo.numInputTensors,
-                                                            outputTensorsEmbd[0],
-                                                            graphInfo.numOutputTensors,
-                                                            nullptr, nullptr);
-        if (QNN_GRAPH_NO_ERROR != executeStatus) {
-            return RWKV_ERROR_IO;
+        if (RWKV_SUCCESS != execute_emb_decode_graph()) {
+            return RWKV_ERROR_EVAL;
         }
     }
 
-    if (logits_buffer.empty()) logits_buffer.resize(vocab_size);
-    void *buffer = qnnIOTensorUtils->getBuffer(logitsOutputTensor);
-
-    if (QNN_TENSOR_GET_DATA_TYPE(logitsOutputTensor) == QNN_DATATYPE_FLOAT_32) {
-        logits = (float*)buffer;
-    } else if (QNN_TENSOR_GET_DATA_TYPE(logitsOutputTensor) == QNN_DATATYPE_FLOAT_16) {
-        half_float::half *ptr = (half_float::half*)buffer;
-        for (int i = 0; i < vocab_size; i++) {
-            logits_buffer[i] = ptr[i];
-        }
-    } else if (QNN_TENSOR_GET_DATA_TYPE(logitsOutputTensor) == QNN_DATATYPE_UFIXED_POINT_16) {
-        datautil::tfNToFloat<uint16_t>(logits_buffer.data(), reinterpret_cast<uint16_t*>(buffer),
-            QNN_TENSOR_GET_QUANT_PARAMS(logitsOutputTensor).scaleOffsetEncoding.offset,
-            QNN_TENSOR_GET_QUANT_PARAMS(logitsOutputTensor).scaleOffsetEncoding.scale,
-            vocab_size);
-    } else {
-        LOGE("Unsupported data type");
-        return RWKV_ERROR_IO;
-    }
-    logits = logits_buffer.data();
-
-    return RWKV_SUCCESS;
+    return post_graph_execute(logits);
 }
+
 bool qnn_backend::is_available() {
     // TODO: Detect this
     return true;
@@ -1418,39 +1537,37 @@ bool qnn_backend::is_available() {
 
 int qnn_backend::clear_state() {
     if (!isTensorInitialized) return RWKV_SUCCESS;
-    for (int graph_id = 0; graph_id < qnnDecodeGraphsCount; graph_id++) {
-        auto graphInfo     = (*qnnDecodeGraphsInfo)[graph_id];
-
-        for (size_t i = 0; i < graphInfo.numOutputTensors; i++) {
-            size_t element_count = 1;
-            for (int j = 0; j < QNN_TENSOR_GET_RANK(outputTensors[graph_id][i]); j++) {
-                element_count *= *(QNN_TENSOR_GET_DIMENSIONS(outputTensors[graph_id][i]) + j);
-            }
-            void *buffer = qnnIOTensorUtils->getBuffer(&outputTensors[graph_id][i]);
-            if (QNN_TENSOR_GET_DATA_TYPE(outputTensors[graph_id][i]) == QNN_DATATYPE_FLOAT_16)
-                memset(buffer, 0, element_count * sizeof(uint16_t));
-            else if (QNN_TENSOR_GET_DATA_TYPE(outputTensors[graph_id][i]) == QNN_DATATYPE_FLOAT_32)
-                memset(buffer, 0, element_count * sizeof(float));
-            else {
-                fill_quantized_tensor(0.0, &outputTensors[graph_id][i]);
-            }
+    for (auto &[tensorName, tensor] : stateTensorsNameToTensorPointer) {
+        size_t element_count = 1;
+        Qnn_Tensor_t *qnntensor = (Qnn_Tensor_t*)tensor;
+        for (int j = 0; j < QNN_TENSOR_GET_RANK(qnntensor); j++) {
+            element_count *= *(QNN_TENSOR_GET_DIMENSIONS(qnntensor) + j);
         }
+        void *buffer = qnnIOTensorUtils->getBuffer(qnntensor);
+        if (buffer == nullptr) {
+            LOGE("%s: Failed to get buffer for tensor %s", __func__, tensorName.c_str());
+            return RWKV_ERROR_IO;
+        }
+        if (QNN_TENSOR_GET_DATA_TYPE(qnntensor) == QNN_DATATYPE_FLOAT_16)
+            memset(buffer, 0, element_count * sizeof(uint16_t));
+        else if (QNN_TENSOR_GET_DATA_TYPE(qnntensor) == QNN_DATATYPE_FLOAT_32)
+            memset(buffer, 0, element_count * sizeof(float));
+        else
+            fill_quantized_tensor(0.0, qnntensor);
     }
     return RWKV_SUCCESS;
 }
 
 int qnn_backend::get_state(std::any &state) {
     auto new_state = std::vector<std::vector<uint8_t>>();
-    for (int graph_id = 0; graph_id < qnnDecodeGraphsCount; graph_id++) {
-        auto graphInfo     = (*qnnDecodeGraphsInfo)[graph_id];
-
-        for (size_t i = 0; i < graphInfo.numOutputTensors; i++) {
-            std::string outputName = std::string(QNN_TENSOR_GET_NAME(outputTensors[graph_id][i]));
-            
-            if (outputName.find("state") != std::string::npos) {
-                new_state.push_back(std::vector<uint8_t>((uint8_t*)qnnIOTensorUtils->getBuffer(&outputTensors[graph_id][i]), (uint8_t*)qnnIOTensorUtils->getBuffer(&outputTensors[graph_id][i]) + qnnIOTensorUtils->getBufferSize(&outputTensors[graph_id][i])));
-            }
+    for (int i = 0; i < 3 * n_layers; i++) {
+        Qnn_Tensor_t *tensor = (Qnn_Tensor_t*)stateTensorsNameToTensorPointer["state" + std::to_string(i) + "_out"];
+        uint8_t *buffer = (uint8_t*)qnnIOTensorUtils->getBuffer(tensor);
+        if (buffer == nullptr) {
+            LOGE("%s: Failed to get buffer for state tensor %i", __func__, i);
+            return RWKV_ERROR_IO;
         }
+        new_state.push_back(std::vector<uint8_t>(buffer, buffer + qnnIOTensorUtils->getBufferSize(tensor)));
     }
     state = new_state;
     return RWKV_SUCCESS;
@@ -1459,18 +1576,14 @@ int qnn_backend::get_state(std::any &state) {
 int qnn_backend::set_state(std::any state) {
     if (!state.has_value()) return RWKV_SUCCESS;
     auto new_state = std::any_cast<std::vector<std::vector<uint8_t>>>(state);
-    int idx = 0;
-    for (int graph_id = 0; graph_id < qnnDecodeGraphsCount; graph_id++) {
-        auto graphInfo     = (*qnnDecodeGraphsInfo)[graph_id];
-
-        for (size_t i = 0; i < graphInfo.numOutputTensors; i++) {
-            std::string outputName = std::string(QNN_TENSOR_GET_NAME(outputTensors[graph_id][i]));
-            
-            if (outputName.find("state") != std::string::npos) {
-                memcpy(qnnIOTensorUtils->getBuffer(&outputTensors[graph_id][i]), new_state[idx].data(), new_state[idx].size());
-                idx++;
-            }
+    for (int i = 0; i < 3 * n_layers; i++) {
+        Qnn_Tensor_t *tensor = (Qnn_Tensor_t*)stateTensorsNameToTensorPointer["state" + std::to_string(i) + "_out"];
+        void *buffer = qnnIOTensorUtils->getBuffer(tensor);
+        if (buffer == nullptr) {
+            LOGE("%s: Failed to get buffer for state tensor %i", __func__, i);
+            return RWKV_ERROR_IO;
         }
+        memcpy(buffer, new_state[i].data(), new_state[i].size());
     }
     return RWKV_SUCCESS;
 }
@@ -1487,36 +1600,32 @@ int qnn_backend::free_state(std::any state) {
 
 int qnn_backend::load_raw_states(std::vector<std::vector<half_float::half>> states) {
     clear_state();
-    for (int graph_id = 0; graph_id < qnnDecodeGraphsCount; graph_id++) {
-        auto graphInfo     = (*qnnDecodeGraphsInfo)[graph_id];
-
-        for (size_t i = 0; i < graphInfo.numOutputTensors; i++) {
-            std::string outputName = std::string(QNN_TENSOR_GET_NAME(outputTensors[graph_id][i]));
-
-            if (outputName.find("state") != std::string::npos) {
-                int idx = std::stoi(outputName.substr(0, outputName.find("_")).substr(5).c_str());
-                if (idx % 3 == 1) {
-                    idx /= 3;
-                    memcpy(qnnIOTensorUtils->getBuffer(&outputTensors[graph_id][i]), states[idx].data(), states[idx].size() * sizeof(half_float::half));
-                }
-            }
+    for (int i = 0; i < n_layers; i++) {
+        Qnn_Tensor_t *tensor = (Qnn_Tensor_t*)stateTensorsNameToTensorPointer["state" + std::to_string(i * 3 + 1) + "_out"];
+        void *buffer = qnnIOTensorUtils->getBuffer(tensor);
+        if (buffer == nullptr) {
+            LOGE("%s: Failed to get buffer for state tensor %i", __func__, i);
+            return RWKV_ERROR_IO;
         }
+        memcpy(buffer, states[i].data(), states[i].size() * sizeof(half_float::half));
     }
     return RWKV_SUCCESS;
 }
 
 int qnn_backend::release_model() {
     // free graphs
-    for (int i = 0; i < qnnDecodeGraphsCount; i++) {
-        auto graphInfo     = (*qnnDecodeGraphsInfo)[i];
-        qnnIOTensorUtils->tearDownTensors(inputTensors[i], graphInfo.numInputTensors);
-        qnnIOTensorUtils->tearDownTensors(outputTensors[i], graphInfo.numOutputTensors);
-        inputTensors[i]  = nullptr;
-        outputTensors[i] = nullptr;
-    }
+    if (qnnDecodeGraphsCount > 0) {
+        for (int i = 0; i < qnnDecodeGraphsCount; i++) {
+            auto graphInfo     = (*qnnDecodeGraphsInfo)[i];
+            qnnIOTensorUtils->tearDownTensors(inputTensors[i], graphInfo.numInputTensors);
+            qnnIOTensorUtils->tearDownTensors(outputTensors[i], graphInfo.numOutputTensors);
+            inputTensors[i]  = nullptr;
+            outputTensors[i] = nullptr;
+        }
 
-    freeGraphsInfo(&qnnDecodeGraphsInfo, qnnDecodeGraphsCount);
-    qnnDecodeGraphsInfo = nullptr;
+        freeGraphsInfo(&qnnDecodeGraphsInfo, qnnDecodeGraphsCount);
+        qnnDecodeGraphsInfo = nullptr;
+    }
 
     if (qnnPrefillGraphsCount > 0) {
         for (int i = 0; i < qnnPrefillGraphsCount; i++) {

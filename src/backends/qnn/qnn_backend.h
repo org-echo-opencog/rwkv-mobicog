@@ -37,6 +37,11 @@ public:
 
     int load_raw_states(std::vector<std::vector<half_float::half>> states) override;
 
+    int copy_float_to_qnn_tensor(Qnn_Tensor_t *qnn_tensor, const float *buffer, size_t element_count);
+
+    int copy_qnn_tensor_to_float(Qnn_Tensor_t *qnn_tensor, float *buffer, size_t element_count);
+
+    int post_graph_execute(float *& logits);
 private:
     double prefill_speed = -1;
     std::string qnnBackendPath;
@@ -93,6 +98,8 @@ private:
     Qnn_Tensor_t *tokenInputTensorEmbd = nullptr;
     Qnn_Tensor_t *tokenInputTensorEmbdPrefill = nullptr;
 
+    size_t logitsOutputTensorSize = 0;
+
     IOTensor* qnnIOTensorUtils = nullptr;
 
     std::vector<std::unordered_map<std::string, void*>> decodeGraphsTensorNameToTensorPointer;
@@ -104,6 +111,8 @@ private:
     std::vector<std::unordered_map<std::string, void*>> embdPrefillGraphsTensorNameToTensorPointer;
     std::vector<std::unordered_map<std::string, size_t>> embdPrefillGraphsTensorNameToSize;
 
+    std::unordered_map<std::string, void*> stateTensorsNameToTensorPointer;
+
     int qnn_create_power_config_id();
     int qnn_destory_power_config_id();
     int qnn_set_power_config();
@@ -112,6 +121,12 @@ private:
     int qnn_initialize_tensors();
 
     void fill_quantized_tensor(float value, Qnn_Tensor_t *tensor);
+
+    int execute_graph(GraphInfo_t** graphInfo, int graphsCount, Qnn_Tensor_t** inputTensors, Qnn_Tensor_t** outputTensors);
+    int execute_decode_graph();
+    int execute_prefill_graph();
+    int execute_emb_decode_graph();
+    int execute_emb_prefill_graph();
 
     std::vector<float> logits_buffer;
 

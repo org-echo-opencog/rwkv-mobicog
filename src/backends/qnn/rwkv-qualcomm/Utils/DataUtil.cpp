@@ -285,7 +285,7 @@ datautil::StatusCode datautil::floatToTfN(
   static_assert(std::is_unsigned<T_QuantType>::value, "floatToTfN supports unsigned only!");
 
   if (nullptr == out || nullptr == in) {
-    rwkvmobile::LOGE("Received a nullptr");
+    rwkvmobile::LOGE("%s: Received a nullptr", __func__);
     return StatusCode::INVALID_BUFFER;
   }
 
@@ -319,7 +319,7 @@ datautil::StatusCode datautil::tfNToFloat(
   static_assert(std::is_unsigned<T_QuantType>::value, "tfNToFloat supports unsigned only!");
 
   if (nullptr == out || nullptr == in) {
-    rwkvmobile::LOGE("Received a nullptr");
+    rwkvmobile::LOGE("%s: Received a nullptr", __func__);
     return StatusCode::INVALID_BUFFER;
   }
   for (size_t i = 0; i < numElements; i++) {
@@ -339,7 +339,7 @@ template datautil::StatusCode datautil::tfNToFloat<uint16_t>(
 template <typename T_QuantType>
 datautil::StatusCode datautil::castToFloat(float* out, T_QuantType* in, size_t numElements) {
   if (nullptr == out || nullptr == in) {
-    rwkvmobile::LOGE("Received a nullptr");
+    rwkvmobile::LOGE("%s: Received a nullptr", __func__);
     return StatusCode::INVALID_BUFFER;
   }
   for (size_t i = 0; i < numElements; i++) {
@@ -383,7 +383,7 @@ template datautil::StatusCode datautil::castToFloat<int64_t>(float* out,
 template <typename T_QuantType>
 datautil::StatusCode datautil::castFromFloat(T_QuantType* out, float* in, size_t numElements) {
   if (nullptr == out || nullptr == in) {
-    rwkvmobile::LOGE("Received a nullptr");
+    rwkvmobile::LOGE("%s: Received a nullptr", __func__);
     return StatusCode::INVALID_BUFFER;
   }
   for (size_t i = 0; i < numElements; i++) {
