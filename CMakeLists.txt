@@ -50,6 +50,8 @@ set(RWKV_MOBILE_SRCS
     src/logger.cpp
     src/soc_detect.cpp
     src/rmpack.cpp
+    src/backend.cpp
+    src/state.cpp
 )
 
 if (WIN32)

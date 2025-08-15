@@ -26,4 +26,4 @@ std::vector<std::vector<uint8_t>> rwkv_coreml_get_state(struct rwkv_coreml_conte
 
 void rwkv_coreml_set_state(struct rwkv_coreml_context * ctx, std::vector<std::vector<uint8_t>> state);
 
-void rwkv_coreml_clear_state(struct rwkv_coreml_context * ctx);
+void rwkv_coreml_zero_state(struct rwkv_coreml_context * ctx);

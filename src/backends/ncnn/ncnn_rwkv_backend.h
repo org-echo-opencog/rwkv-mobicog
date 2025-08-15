@@ -20,7 +20,7 @@ public:
     int get_state(std::any &state) override;
     int set_state(std::any state) override;
     int free_state(std::any state) override;
-    int clear_state() override;
+    int zero_state() override;
     int release_model() override;
     int release() override;
 

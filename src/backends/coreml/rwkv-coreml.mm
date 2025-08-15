@@ -298,7 +298,7 @@ void rwkv_coreml_set_state(struct rwkv_coreml_context * ctx, std::vector<std::ve
     }
 }
 
-void rwkv_coreml_clear_state(struct rwkv_coreml_context * ctx) {
+void rwkv_coreml_zero_state(struct rwkv_coreml_context * ctx) {
     if (ctx->is_stateful) {
         // TODO
     } else if (ctx->is_merged_states) {

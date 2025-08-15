@@ -1200,7 +1200,7 @@ int qnn_backend::qnn_initialize_tensors() {
 
         isTensorInitialized = true;
 
-        clear_state();
+        zero_state();
     }
 
     return RWKV_SUCCESS;
@@ -1547,7 +1547,7 @@ bool qnn_backend::is_available() {
     return true;
 }
 
-int qnn_backend::clear_state() {
+int qnn_backend::zero_state() {
     if (!isTensorInitialized) return RWKV_SUCCESS;
     for (auto &[tensorName, tensor] : stateTensorsNameToTensorPointer) {
         size_t element_count = 1;
@@ -1611,7 +1611,7 @@ int qnn_backend::free_state(std::any state) {
 }
 
 int qnn_backend::load_raw_states(std::vector<std::vector<half_float::half>> states) {
-    clear_state();
+    zero_state();
     for (int i = 0; i < n_layers; i++) {
         Qnn_Tensor_t *tensor = (Qnn_Tensor_t*)stateTensorsNameToTensorPointer["state" + std::to_string(i * 3 + 1) + "_out"];
         void *buffer = qnnIOTensorUtils->getBuffer(tensor);
@@ -1621,6 +1621,9 @@ int qnn_backend::load_raw_states(std::vector<std::vector<half_float::half>> stat
         }
         memcpy(buffer, states[i].data(), states[i].size() * sizeof(half_float::half));
     }
+
+    get_state(state_head->state);
+    state_head->delete_after();
     return RWKV_SUCCESS;
 }
 

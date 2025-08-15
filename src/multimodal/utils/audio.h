@@ -37,4 +37,6 @@ void dynamic_range_compression(std::vector<std::vector<float>>& features);
 
 void audio_volume_normalize(std::vector<float>& audio, float coeff = 0.2f);
 
+void save_samples_to_wav(std::vector<float> samples, std::string path, int sample_rate = 24000);
+
 }

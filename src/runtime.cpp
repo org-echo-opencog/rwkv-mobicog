@@ -208,13 +208,7 @@ int runtime::load_model(std::string model_path) {
         LOGE("Failed to load model from: %s, errno = %d\n", model_path.c_str(), ret);
     }
 
-    // Initialize state
-    _state_head = new state_node;
-    if (_state_head == nullptr) {
-        return RWKV_ERROR_RUNTIME | RWKV_ERROR_ALLOC;
-    }
     _backend->clear_state();
-    _backend->get_state(_state_head->state);
 
     _vocab_size = _backend->get_num_vocab();
     return ret;
@@ -357,15 +351,13 @@ int runtime::load_initial_state(std::string state_path) {
     }
     _backend->load_raw_states(states);
 
-    _backend->get_state(_state_head->state);
-    delete_state_node_after(_state_head);
     return RWKV_SUCCESS;
 }
 
 void runtime::clear_initial_state() {
-    _backend->clear_state();
-    _backend->get_state(_state_head->state);
-    delete_state_node_after(_state_head);
+    _backend->zero_state();
+    _backend->get_state(_backend->state_head->state);
+    _backend->state_head->delete_after();
 }
 
 int runtime::eval_logits(int id, float *& logits) {
@@ -526,51 +518,6 @@ std::string runtime::apply_chat_template(std::vector<std::string> inputs, bool e
     return text;
 }
 
-runtime::state_node* runtime::match_and_load_state(const std::vector<int> &ids, std::vector<int> &new_ids_to_prefill) {
-    auto node = _state_head;
-    size_t compare_pos = 0;
-
-    // find the last node that matches the input text
-    while (node->next) {
-
-        if (compare_pos + node->next->ids.size() > ids.size() || !std::equal(ids.begin() + compare_pos, ids.begin() + compare_pos + node->next->ids.size(), node->next->ids.begin())) {
-            // the text will diverge at next node
-            break;
-        }
-        std::string debug_msg = "matched tokens:";
-        for (auto id : node->next->ids) {
-            debug_msg += std::to_string(id) + " ";
-        }
-        LOGI("%s\n", debug_msg.c_str());
-        compare_pos += node->next->ids.size();
-        node = node->next;
-    }
-
-    _backend->set_state(node->state);
-    delete_state_node_after(node);
-
-    new_ids_to_prefill = std::vector<int>(ids.begin() + compare_pos, ids.end());
-    std::string debug_msg = "new tokens to prefill: ";
-    for (auto id : new_ids_to_prefill) {
-        debug_msg += std::to_string(id) + " ";
-    }
-    LOGD("%s\n", debug_msg.c_str());
-    return node;
-}
-
-int runtime::register_state_checkpoint(state_node* &node, const std::vector<int> &ids, const float *logits) {
-    node->next = new state_node;
-    if (node->next == nullptr) {
-        return RWKV_ERROR_RUNTIME | RWKV_ERROR_ALLOC;
-    }
-    node = node->next;
-    node->ids = std::vector<int>(ids);
-    _backend->get_state(node->state);
-    node->last_logits.resize(_vocab_size);
-    memcpy(node->last_logits.data(), logits, _vocab_size * sizeof(float));
-    return RWKV_SUCCESS;
-}
-
 int runtime::chat(std::vector<std::string> inputs, const int max_length, void (*callback)(const char *, const int, const char *), bool enable_reasoning) {
     if (_backend == nullptr || _tokenizer == nullptr) {
         return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
@@ -599,7 +546,7 @@ int runtime::chat(std::vector<std::string> inputs, const int max_length, void (*
 
     float *logits = nullptr;
     std::vector<int> tokens_to_prefill;
-    auto node = match_and_load_state(text_ids, tokens_to_prefill);
+    auto node = _backend->match_and_load_state(text_ids, tokens_to_prefill);
 
     if (tokens_to_prefill.size() > 0) {
         _prefill_progress_start(tokens_to_prefill.size());
@@ -614,7 +561,7 @@ int runtime::chat(std::vector<std::string> inputs, const int max_length, void (*
         for (int i = 0; i < tokens_to_prefill.size(); i += checkpoint_interval) {
             std::vector<int> tokens_to_prefill_chunk = std::vector<int>(tokens_to_prefill.begin() + i, tokens_to_prefill.begin() + std::min(i + checkpoint_interval, (int)tokens_to_prefill.size()));
             eval_logits(tokens_to_prefill_chunk, logits);
-            int ret = register_state_checkpoint(node, tokens_to_prefill_chunk, logits);
+            int ret = _backend->register_state_checkpoint(node, tokens_to_prefill_chunk, logits);
             if (ret) return ret;
             _backend->free_logits_if_allocated(logits);
         }
@@ -712,7 +659,7 @@ int runtime::chat(std::vector<std::string> inputs, const int max_length, void (*
     }
 
     if (response_ids_raw.size() > 0) {
-        int ret = register_state_checkpoint(node, response_ids_raw, logits);
+        int ret = _backend->register_state_checkpoint(node, response_ids_raw, logits);
         if (ret) return ret;
     }
 
@@ -732,34 +679,34 @@ int runtime::set_prompt(std::string prompt) {
 
     LOGD("Setting and processing prompt: \"%s\"\n", prompt.c_str());
     std::vector<int> ids = _tokenizer->encode(prompt);
-    if (_state_head->next == nullptr) {
-        _state_head->next = new state_node;
-        if (_state_head->next == nullptr) {
+    if (_backend->state_head->next == nullptr) {
+        _backend->state_head->next = new state_node;
+        if (_backend->state_head->next == nullptr) {
             return RWKV_ERROR_RUNTIME | RWKV_ERROR_ALLOC;
         }
     }
 
-    if (_state_head->next->ids == ids) {
+    if (_backend->state_head->next->ids == ids) {
         return RWKV_SUCCESS;
     }
     _prompt = prompt;
-    _backend->set_state(_state_head->state);
-    _state_head->next->ids = ids;
+    _backend->set_state(_backend->state_head->state);
+    _backend->state_head->next->ids = ids;
 
     if (ids.empty()) {
         return RWKV_SUCCESS;
     }
-    if (_state_head->next->state.has_value()) {
-        _backend->free_state(_state_head->next->state);
+    if (_backend->state_head->next->state.has_value()) {
+        _backend->free_state(_backend->state_head->next->state);
     }
     float *logits = nullptr;
     int ret = eval_logits(ids, logits);
     if (ret) {
         return ret;
     }
-    _backend->get_state(_state_head->next->state);
-    _state_head->next->last_logits.resize(_vocab_size);
-    memcpy(_state_head->next->last_logits.data(), logits, _vocab_size * sizeof(float));
+    _backend->get_state(_backend->state_head->next->state);
+    _backend->state_head->next->last_logits.resize(_vocab_size);
+    memcpy(_backend->state_head->next->last_logits.data(), logits, _vocab_size * sizeof(float));
     _backend->free_logits_if_allocated(logits);
     return RWKV_SUCCESS;
 }
@@ -776,25 +723,25 @@ int runtime::set_image_prompt(std::string path) {
     std::string prompt = "<img src=\"" + path + "\">";
     std::vector<int> ids = _tokenizer->encode(prompt);
 
-    if (_state_head->next == nullptr) {
-        _state_head->next = new state_node;
-        if (_state_head->next == nullptr) {
+    if (_backend->state_head->next == nullptr) {
+        _backend->state_head->next = new state_node;
+        if (_backend->state_head->next == nullptr) {
             return RWKV_ERROR_RUNTIME | RWKV_ERROR_ALLOC;
         }
     }
 
-    if (_state_head->next->ids == ids) {
+    if (_backend->state_head->next->ids == ids) {
         return RWKV_SUCCESS;
     }
     _prompt = prompt;
-    _backend->set_state(_state_head->state);
-    _state_head->next->ids = ids;
+    _backend->set_state(_backend->state_head->state);
+    _backend->state_head->next->ids = ids;
 
     if (ids.empty()) {
         return RWKV_SUCCESS;
     }
-    if (_state_head->next->state.has_value()) {
-        _backend->free_state(_state_head->next->state);
+    if (_backend->state_head->next->state.has_value()) {
+        _backend->free_state(_backend->state_head->next->state);
     }
 
     auto start = std::chrono::high_resolution_clock::now();
@@ -813,9 +760,9 @@ int runtime::set_image_prompt(std::string path) {
     }
     end = std::chrono::high_resolution_clock::now();
     LOGI("eval_logits_with_embeddings duration: %lld ms", std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count());
-    _backend->get_state(_state_head->next->state);
-    _state_head->next->last_logits.resize(_vocab_size);
-    memcpy(_state_head->next->last_logits.data(), logits, _vocab_size * sizeof(float));
+    _backend->get_state(_backend->state_head->next->state);
+    _backend->state_head->next->last_logits.resize(_vocab_size);
+    memcpy(_backend->state_head->next->last_logits.data(), logits, _vocab_size * sizeof(float));
     llava_image_embed_free(embd);
     _backend->free_logits_if_allocated(logits);
     return RWKV_SUCCESS;
@@ -830,25 +777,25 @@ int runtime::set_audio_prompt(std::string path) {
     std::string prompt = "<audio src=\"" + path + "\">";
     std::vector<int> ids = _tokenizer->encode(prompt);
 
-    if (_state_head->next == nullptr) {
-        _state_head->next = new state_node;
-        if (_state_head->next == nullptr) {
+    if (_backend->state_head->next == nullptr) {
+        _backend->state_head->next = new state_node;
+        if (_backend->state_head->next == nullptr) {
             return RWKV_ERROR_RUNTIME | RWKV_ERROR_ALLOC;
         }
     }
 
-    if (_state_head->next->ids == ids) {
+    if (_backend->state_head->next->ids == ids) {
         return RWKV_SUCCESS;
     }
     _prompt = prompt;
-    _backend->set_state(_state_head->state);
-    _state_head->next->ids = ids;
+    _backend->set_state(_backend->state_head->state);
+    _backend->state_head->next->ids = ids;
 
     if (ids.empty()) {
         return RWKV_SUCCESS;
     }
-    if (_state_head->next->state.has_value()) {
-        _backend->free_state(_state_head->next->state);
+    if (_backend->state_head->next->state.has_value()) {
+        _backend->free_state(_backend->state_head->next->state);
     }
 
     wav_file wav;
@@ -872,28 +819,15 @@ int runtime::set_audio_prompt(std::string path) {
     if (ret) {
         return ret;
     }
-    _backend->get_state(_state_head->next->state);
-    _state_head->next->last_logits.resize(_vocab_size);
-    memcpy(_state_head->next->last_logits.data(), logits, _vocab_size * sizeof(float));
+    _backend->get_state(_backend->state_head->next->state);
+    _backend->state_head->next->last_logits.resize(_vocab_size);
+    memcpy(_backend->state_head->next->last_logits.data(), logits, _vocab_size * sizeof(float));
     _backend->free_logits_if_allocated(logits);
     return RWKV_SUCCESS;
 }
 #endif
 
 #ifdef ENABLE_TTS
-static void save_samples_to_wav(std::vector<float> samples, std::string path, int sample_rate = 24000) {
-    wav_file wav_file;
-    wav_file.sample_rate = sample_rate;
-    wav_file.num_channels = 1;
-    wav_file.num_samples = samples.size();
-    wav_file.bit_depth = 16;
-    wav_file.audio_format = 1;
-    wav_file.byte_rate = sample_rate * 16 / 8;
-    wav_file.block_align = 2;
-    wav_file.samples = samples;
-    wav_file.save(path);
-}
-
 int runtime::sparktts_load_models(
     std::string wav2vec2_path,
     std::string bicodec_tokenizer_path,

@@ -17,7 +17,7 @@ public:
         return;
     };
     bool is_available() override;
-    int clear_state() override;
+    int zero_state() override;
     int get_state(std::any &state) override;
     int set_state(std::any state) override;
     int free_state(std::any state) override;

@@ -270,4 +270,17 @@ void audio_volume_normalize(std::vector<float>& audio, float coeff) {
     return;
 }
 
+void save_samples_to_wav(std::vector<float> samples, std::string path, int sample_rate) {
+    wav_file wav_file;
+    wav_file.sample_rate = sample_rate;
+    wav_file.num_channels = 1;
+    wav_file.num_samples = samples.size();
+    wav_file.bit_depth = 16;
+    wav_file.audio_format = 1;
+    wav_file.byte_rate = sample_rate * 16 / 8;
+    wav_file.block_align = 2;
+    wav_file.samples = samples;
+    wav_file.save(path);
+}
+
 }

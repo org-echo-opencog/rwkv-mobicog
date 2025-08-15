@@ -66,8 +66,8 @@ int coreml_rwkv_backend::free_state(std::any state) {
     return RWKV_SUCCESS;
 }
 
-int coreml_rwkv_backend::clear_state() {
-    rwkv_coreml_clear_state(ctx);
+int coreml_rwkv_backend::zero_state() {
+    rwkv_coreml_zero_state(ctx);
     return RWKV_SUCCESS;
 }
 

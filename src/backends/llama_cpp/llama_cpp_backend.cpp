@@ -107,7 +107,7 @@ bool llama_cpp_backend::is_available() {
     return true;
 }
 
-int llama_cpp_backend::clear_state() {
+int llama_cpp_backend::zero_state() {
     llama_memory_clear(llama_get_memory(ctx), true);
     return RWKV_SUCCESS;
 }
@@ -140,7 +140,7 @@ int llama_cpp_backend::free_state(std::any state) {
 }
 
 int llama_cpp_backend::load_raw_states(std::vector<std::vector<half_float::half>> states) {
-    clear_state();
+    zero_state();
     float * logits;
     eval(0, logits);
     llama_memory_recurrent * mem = (llama_memory_recurrent *)llama_get_memory(ctx);
@@ -160,7 +160,9 @@ int llama_cpp_backend::load_raw_states(std::vector<std::vector<half_float::half>
         ggml_backend_tensor_set(s, state_f32.data(), 0, state_f32.size() * sizeof(float));
         ggml_backend_tensor_memset(r, 0, 0, r->ne[0] * sizeof(float));
     }
-    LOGI("state loaded");
+
+    get_state(state_head->state);
+    state_head->delete_after();
     return RWKV_SUCCESS;
 }
 

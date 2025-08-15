@@ -143,7 +143,7 @@ int ncnn_rwkv_backend::free_state(std::any state) {
     return RWKV_SUCCESS;
 }
 
-int ncnn_rwkv_backend::clear_state() {
+int ncnn_rwkv_backend::zero_state() {
     for (auto &state : states) {
         state.fill(0.0f);
     }

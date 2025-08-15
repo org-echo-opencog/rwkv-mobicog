@@ -90,7 +90,7 @@ bool web_rwkv_backend::is_available() {
     return true;
 }
 
-int web_rwkv_backend::clear_state() {
+int web_rwkv_backend::zero_state() {
     ::clear_state();
     return RWKV_SUCCESS;
 }

@@ -7,6 +7,7 @@
 #include "half.hpp"
 
 #include "commondef.h"
+#include "state.h"
 
 namespace rwkvmobile {
 
@@ -22,7 +23,7 @@ public:
     virtual int get_state(std::any &state) { return 0; }
     virtual int set_state(std::any state) { return 0; }
     virtual int free_state(std::any state) { return 0; }
-    virtual int clear_state() { return 0; }
+    virtual int zero_state() { return 0; }
     virtual int release_model() { return 0; };
     virtual int release() { return 0; };
     virtual bool is_available() { return false; };
@@ -44,6 +45,23 @@ public:
     int vocab_size;
 
     std::string extra_str;
+
+    state_node * state_head = nullptr;
+
+    int clear_state() {
+        if (state_head != nullptr) {
+            state_head->delete_after();
+            set_state(state_head->state);
+        } else {
+            zero_state();
+            state_head = new state_node();
+            get_state(state_head->state);
+        }
+        return RWKV_SUCCESS;
+    }
+
+    state_node* match_and_load_state(const std::vector<int> &ids, std::vector<int> &new_ids_to_prefill);
+    int register_state_checkpoint(state_node* &node, const std::vector<int> &ids, const float *logits);
 };
 
 enum {

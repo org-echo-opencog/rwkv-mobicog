@@ -121,33 +121,15 @@ public:
 #endif
 
     // for state management
-    struct state_node {
-        std::any state;
-        std::vector<int> ids;
-        std::vector<float> last_logits;
-        struct state_node * next = nullptr;
-    } * _state_head = nullptr;
-
     int clear_state() {
-        if (_backend == nullptr || _state_head == nullptr) {
+        if (_backend == nullptr) {
             return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
         }
-        _occurences.clear();
-        auto ptr = _state_head->next;
-        while (ptr) {
-            auto tmp = ptr;
-            ptr = ptr->next;
-            if (tmp->state.has_value()) {
-                _backend->free_state(tmp->state);
-            }
-            delete tmp;
-        }
-        _state_head->next = nullptr;
-        return _backend->clear_state();
-    }
 
-    state_node* match_and_load_state(const std::vector<int> &ids, std::vector<int> &new_ids_to_prefill);
-    int register_state_checkpoint(state_node* &node, const std::vector<int> &ids, const float *logits);
+        _occurences.clear();
+        _backend->clear_state();
+        return RWKV_SUCCESS;
+    }
 
     int release() {
         if (_backend == nullptr) {
@@ -396,15 +378,6 @@ private:
     bool _response_buffer_eos_found = false;
 
     void apply_logits_penalties(float * logits, int vocab_size);
-
-    inline void delete_state_node_after(state_node * node) {
-        while (node->next) {
-            auto tmp = node->next->next;
-            _backend->free_state(node->next->state);
-            delete node->next;
-            node->next = tmp;
-        }
-    }
 
 #ifdef ENABLE_VISION
     std::unique_ptr<clip_ctx, std::function<void(clip_ctx*)>> _vision_encoder;
