@@ -245,9 +245,9 @@ struct sampler_params rwkvmobile_runtime_get_sampler_params(rwkvmobile_runtime_t
         return params;
     }
     auto rt = static_cast<class runtime *>(runtime);
-    params.temperature = rt->get_temperature();
-    params.top_k = rt->get_top_k();
-    params.top_p = rt->get_top_p();
+    params.temperature = rt->sampler->get_temperature();
+    params.top_k = rt->sampler->get_top_k();
+    params.top_p = rt->sampler->get_top_p();
     return params;
 }
 
@@ -268,9 +268,9 @@ struct penalty_params rwkvmobile_runtime_get_penalty_params(rwkvmobile_runtime_t
         return params;
     }
     auto rt = static_cast<class runtime *>(runtime);
-    params.presence_penalty = rt->get_presence_penalty();
-    params.frequency_penalty = rt->get_frequency_penalty();
-    params.penalty_decay = rt->get_penalty_decay();
+    params.presence_penalty = rt->sampler->get_presence_penalty();
+    params.frequency_penalty = rt->sampler->get_frequency_penalty();
+    params.penalty_decay = rt->sampler->get_penalty_decay();
     return params;
 }
 

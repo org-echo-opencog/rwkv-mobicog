@@ -126,7 +126,9 @@ public:
             return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
         }
 
-        _occurences.clear();
+        if (sampler != nullptr) {
+            sampler->clear_occurences();
+        }
         _backend->clear_state();
         return RWKV_SUCCESS;
     }
@@ -141,7 +143,7 @@ public:
             return ret;
         }
         _tokenizer = nullptr;
-        _sampler = nullptr;
+        sampler = nullptr;
         return _backend->release();
     }
 
@@ -149,10 +151,10 @@ public:
     int release_whisper_encoder();
 
     inline int set_seed(int64_t seed) {
-        if (_sampler == nullptr) {
+        if (sampler == nullptr) {
             return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
         }
-        _sampler->set_seed(seed);
+        sampler->set_seed(seed);
         _seed = seed;
         return 0;
     }
@@ -177,31 +179,38 @@ public:
 
     inline std::vector<std::string> get_stop_codes() { return _stop_codes; }
     inline void set_stop_codes(std::vector<std::string> stop_codes) { _stop_codes = stop_codes; }
-    inline std::vector<int> get_token_banned() { return _token_banned; }
-    inline void set_token_banned(std::vector<int> token_banned) { _token_banned = token_banned; }
     inline std::string get_thinking_token() { return _thinking_token; }
     inline void set_thinking_token(std::string thinking_token) { _thinking_token = thinking_token; }
 
     inline void set_sampler_params(float temperature, int top_k, float top_p) {
+        if (sampler == nullptr) {
+            LOGE("Sampler not initialized\n");
+            return;
+        }
         LOGD("Setting sampler params: temperature=%f, top_k=%d, top_p=%f\n", temperature, top_k, top_p);
-        _temperature = temperature;
-        _top_k = top_k;
-        _top_p = top_p;
+        sampler->set_temperature(temperature);
+        sampler->set_top_k(top_k);
+        sampler->set_top_p(top_p);
     }
 
     inline void set_penalty_params(float presence_penalty, float frequency_penalty, float penalty_decay) {
+        if (sampler == nullptr) {
+            LOGE("Sampler not initialized\n");
+            return;
+        }
         LOGD("Setting penalty params: presence_penalty=%f, frequency_penalty=%f, penalty_decay=%f\n", presence_penalty, frequency_penalty, penalty_decay);
-        _presence_penalty = presence_penalty;
-        _frequency_penalty = frequency_penalty;
-        _penalty_decay = penalty_decay;
+        sampler->set_presence_penalty(presence_penalty);
+        sampler->set_frequency_penalty(frequency_penalty);
+        sampler->set_penalty_decay(penalty_decay);
     }
 
-    inline float get_temperature() { return _temperature; }
-    inline int get_top_k() { return _top_k; }
-    inline float get_top_p() { return _top_p; }
-    inline float get_presence_penalty() { return _presence_penalty; }
-    inline float get_frequency_penalty() { return _frequency_penalty; }
-    inline float get_penalty_decay() { return _penalty_decay; }
+    void set_token_banned(std::vector<int> token_banned) {
+        if (sampler == nullptr) {
+            LOGE("Sampler not initialized\n");
+            return;
+        }
+        sampler->set_token_banned(token_banned);
+    }
 
     inline bool is_generating() { return _is_generating; }
     inline void set_is_generating(bool is_generating) { _is_generating = is_generating; }
@@ -310,17 +319,19 @@ public:
 
     // sampler
     int sampler_sample(std::vector<float> logits) {
-        if (_sampler == nullptr) {
+        if (sampler == nullptr) {
             return -1;
         }
-        return _sampler->sample(logits.data(), logits.size(), _temperature, _top_k, _top_p);
+        return sampler->sample(logits.data(), logits.size());
     }
 
     inline void set_cache_dir(std::string cache_dir) { _cache_dir = cache_dir; }
+
+    std::unique_ptr<NucleusSampler> sampler;
+
 private:
     std::unique_ptr<execution_provider, std::function<void(execution_provider*)>> _backend;
     std::unique_ptr<tokenizer_base, std::function<void(tokenizer_base*)>> _tokenizer;
-    std::unique_ptr<sampler> _sampler;
     std::unique_ptr<rwkv_embedding> _embedding;
 
     double _prefill_speed = -1;
@@ -349,12 +360,6 @@ private:
 
     int _vocab_size = 0;
 
-    float _temperature = 2.0;
-    int _top_k = 128;
-    float _top_p = 0.5;
-    float _presence_penalty = 0.5;
-    float _frequency_penalty = 0.5;
-    float _penalty_decay = 0.996;
     int64_t _seed = 42;
     std::string _user_role = "User";
     std::string _response_role = "Assistant";
@@ -367,17 +372,12 @@ private:
     std::thread _prefilling_thread;
 
     std::vector<std::string> _stop_codes = {"\n\n", "\nUser", "User"};
-    std::vector<int> _token_banned = {};
     std::string _bos_token = "";
     std::string _eos_token = "\n\n";
-
-    std::map<int, float> _occurences;
 
     std::string _response_buffer;
     std::vector<int32_t> _response_buffer_ids;
     bool _response_buffer_eos_found = false;
-
-    void apply_logits_penalties(float * logits, int vocab_size);
 
 #ifdef ENABLE_VISION
     std::unique_ptr<clip_ctx, std::function<void(clip_ctx*)>> _vision_encoder;

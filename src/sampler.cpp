@@ -2,11 +2,15 @@
 
 namespace rwkvmobile {
 
-sampler::sampler() {
+NucleusSampler::NucleusSampler() {
     _generator.seed(std::random_device()());
 }
 
-int sampler::sample(const float* logits, const size_t size, float temperature, int top_k, float top_p) {
+int NucleusSampler::sample(const float* logits, const size_t size) {
+    return sample(logits, size, _temperature, _top_k, _top_p);
+}
+
+int NucleusSampler::sample(const float* logits, const size_t size, float temperature, int top_k, float top_p) {
     if (logits == nullptr) {
         return 0;
     }
@@ -70,8 +74,39 @@ int sampler::sample(const float* logits, const size_t size, float temperature, i
     return ret;
 }
 
-void sampler::set_seed(int seed) {
+void NucleusSampler::set_seed(int seed) {
     _generator.seed(seed);
+}
+
+void NucleusSampler::update_occurences(int token) {
+    _occurences[token]++;
+}
+
+void NucleusSampler::apply_penalties(float * logits, const size_t size, std::map<int, float> occurences, std::vector<int> token_banned, float presence_penalty, float frequency_penalty, float penalty_decay) {
+    if (!logits) {
+        return;
+    }
+    for (auto &[id, occurence] : occurences) {
+        if (id >= size) {
+            continue;
+        }
+        logits[id] -=
+            frequency_penalty * occurence + presence_penalty;
+        occurences[id] *= penalty_decay;
+    }
+
+    for (auto &token : token_banned) {
+        if (token >= size) {
+            continue;
+        }
+        logits[token] = -INFINITY;
+    }
+}
+
+void NucleusSampler::apply_penalties(float * logits, const size_t size) {
+    if (_presence_penalty > 0.0f && _frequency_penalty > 0.0f && _penalty_decay > 0.0f) {
+        apply_penalties(logits, size, _occurences, _token_banned, _presence_penalty, _frequency_penalty, _penalty_decay);
+    }
 }
 
 }

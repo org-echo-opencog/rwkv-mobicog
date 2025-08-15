@@ -88,27 +88,6 @@ int backend_str_to_enum(std::string backend) {
     return -1;
 }
 
-void runtime::apply_logits_penalties(float * logits, int vocab_size) {
-    if (!logits) {
-        return;
-    }
-    for (auto &[id, occurence] : _occurences) {
-        if (id >= vocab_size) {
-            continue;
-        }
-        logits[id] -=
-            _frequency_penalty * occurence + _presence_penalty;
-        _occurences[id] *= _penalty_decay;
-    }
-
-    for (auto &token_banned : _token_banned) {
-        if (token_banned >= vocab_size) {
-            continue;
-        }
-        logits[token_banned] = -INFINITY;
-    }
-}
-
 int runtime::init(std::string backend_name) {
     return init(backend_name, nullptr);
 }
@@ -132,8 +111,8 @@ int runtime::init(int backend_id) {
 }
 
 int runtime::init(int backend_id, void * extra) {
-    _sampler = std::unique_ptr<sampler>(new sampler);
-    if (_sampler == nullptr) {
+    sampler = std::unique_ptr<NucleusSampler>(new NucleusSampler);
+    if (sampler == nullptr) {
         return RWKV_ERROR_SAMPLER;
     }
 
@@ -442,14 +421,13 @@ int runtime::chat(std::string input, const int max_length, void (*callback)(cons
     _prefill_progress_finish();
 
     for (int i = 0; i < max_length; i++) {
-        apply_logits_penalties(logits, _vocab_size);
-
-        int idx = _sampler->sample(logits, _vocab_size, _temperature, _top_k, _top_p);
+        sampler->apply_penalties(logits, _vocab_size);
+        int idx = sampler->sample(logits, _vocab_size);
         _backend->free_logits_if_allocated(logits);
         if (idx == 0) {
             break;
         }
-        _occurences[idx]++;
+        sampler->update_occurences(idx);
 
         std::string next = _tokenizer->decode(idx);
         _response_buffer += next;
@@ -573,14 +551,11 @@ int runtime::chat(std::vector<std::string> inputs, const int max_length, void (*
     _response_buffer_ids = _tokenizer->encode(_response_buffer);
     int ret;
 
-    _occurences.clear();
+    sampler->clear_occurences();
     for (int i = 1; i < inputs.size(); i += 2) {
         std::vector<int> ids = _tokenizer->encode(" " + inputs[i]);
         for (auto id: ids) {
-            for (auto &[_id, occurence] : _occurences) {
-                _occurences[_id] *= _penalty_decay;
-            }
-            _occurences[id]++;
+            sampler->update_occurences(id);
         }
     }
 
@@ -599,7 +574,7 @@ int runtime::chat(std::vector<std::string> inputs, const int max_length, void (*
     bool thinking_end_tag_found = false;
     bool is_pseudo_thinking = enable_reasoning && _response_buffer.find("</think>") != std::string::npos;
     for (int i = 0; i < max_length; i++) {
-        apply_logits_penalties(logits, _vocab_size);
+        sampler->apply_penalties(logits, _vocab_size);
 
         if (is_pseudo_thinking && i == 0) {
             // token 61 is '<', 261 is '\n\n'
@@ -609,7 +584,7 @@ int runtime::chat(std::vector<std::string> inputs, const int max_length, void (*
             logits[61] = -1e9f;
         }
 
-        decoded_idx = _sampler->sample(logits, _vocab_size, _temperature, _top_k, _top_p);
+        decoded_idx = sampler->sample(logits, _vocab_size);
         if (decoded_idx == 0) {
             break;
         }
@@ -652,7 +627,7 @@ int runtime::chat(std::vector<std::string> inputs, const int max_length, void (*
             _response_buffer = _response_buffer.substr(1);
         }
 
-        _occurences[decoded_idx]++;
+        sampler->update_occurences(decoded_idx);
         if (callback) {
             callback(_response_buffer.c_str(), decoded_idx, decoded.c_str());
         }
@@ -904,7 +879,7 @@ int runtime::run_spark_tts(std::string tts_text, std::string prompt_audio_text, 
     }
 
     for (int i = 0; i < tts_max_length; i++) {
-        int idx = _sampler->sample(logits, tts_tag_token_offset, tts_temperature, tts_top_k, tts_top_p);
+        int idx = sampler->sample(logits, tts_tag_token_offset, tts_temperature, tts_top_k, tts_top_p);
         _backend->free_logits_if_allocated(logits);
         if (idx == tts_eos_token) {
             break;
@@ -1020,7 +995,7 @@ int runtime::run_spark_tts_streaming(std::string tts_text, std::string prompt_au
             logits[tts_eos_token] = -1e9;
 
             for (int i = 0; i < tts_max_length; i++) {
-                int idx = _sampler->sample(logits, tts_tag_token_offset, tts_temperature, tts_top_k, tts_top_p);
+                int idx = sampler->sample(logits, tts_tag_token_offset, tts_temperature, tts_top_k, tts_top_p);
                 _backend->free_logits_if_allocated(logits);
                 if (idx == tts_eos_token) {
                     LOGI("[TTS] EOS token found");
@@ -1120,13 +1095,10 @@ int runtime::gen_completion(std::string prompt, int max_length, int stop_code, v
     _response_buffer = prompt;
     _response_buffer_ids = ids;
     static int idx = 0;
-    bool apply_penalties = _presence_penalty > 0.0f && _frequency_penalty > 0.0f && _penalty_decay > 0.0f;
     for (int i = 0; i < max_length; i++) {
-        if (apply_penalties) {
-            apply_logits_penalties(logits, _vocab_size);
-        }
+        sampler->apply_penalties(logits, _vocab_size);
+        idx = sampler->sample(logits, _vocab_size);
 
-        idx = _sampler->sample(logits, _vocab_size, _temperature, _top_k, _top_p);
         _backend->free_logits_if_allocated(logits);
         _response_buffer_eos_found = (idx == stop_code);
 
@@ -1142,9 +1114,7 @@ int runtime::gen_completion(std::string prompt, int max_length, int stop_code, v
             break;
         }
 
-        if (apply_penalties) {
-            _occurences[idx]++;
-        }
+        sampler->update_occurences(idx);
     }
 
     set_is_generating(false);
