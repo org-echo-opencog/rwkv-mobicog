@@ -8,7 +8,6 @@
 
 namespace rwkvmobile {
 
-#ifdef ENABLE_WEBRWKV
 int web_rwkv_backend::init(void * extra) {
     ::init((uint64_t)time(NULL));
     return RWKV_SUCCESS;
@@ -137,57 +136,5 @@ int web_rwkv_backend::release_model() {
 int web_rwkv_backend::release() {
     return RWKV_SUCCESS;
 }
-
-#else
-
-int web_rwkv_backend::init(void * extra) {
-    return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
-}
-
-int web_rwkv_backend::load_model(std::string model_path) {
-    return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
-}
-
-int web_rwkv_backend::eval(int id, float *& logits) {
-    return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
-}
-
-int web_rwkv_backend::eval(std::vector<int> ids, float *& logits) {
-    return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
-}
-
-void web_rwkv_backend::free_logits_if_allocated(float *& logits) {
-    return;
-}
-
-int web_rwkv_backend::clear_state() {
-    return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
-}
-
-int web_rwkv_backend::get_state(std::any &state) {
-    return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
-}
-
-int web_rwkv_backend::set_state(std::any state) {
-    return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
-}
-
-int web_rwkv_backend::free_state(std::any state) {
-    return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
-}
-
-bool web_rwkv_backend::is_available() {
-    return false;
-}
-
-int web_rwkv_backend::release_model() {
-    return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
-}
-
-int web_rwkv_backend::release() {
-    return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
-}
-
-#endif
 
 } // namespace rwkvmobile
