@@ -5,14 +5,11 @@
 #include "ncnn_rwkv_backend.h"
 #include "commondef.h"
 
-#ifdef ENABLE_NCNN
 #include "net.h"
 #include "mat.h"
-#endif
 
 namespace rwkvmobile {
 
-#ifdef ENABLE_NCNN
 int ncnn_rwkv_backend::init(void * extra) {
     return RWKV_SUCCESS;
 }
@@ -167,53 +164,5 @@ bool ncnn_rwkv_backend::is_available() {
     // always available
     return true;
 }
-
-#else
-
-int ncnn_rwkv_backend::init(void * extra) {
-    return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
-}
-
-int ncnn_rwkv_backend::load_model(std::string model_path) {
-    return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
-}
-
-int ncnn_rwkv_backend::eval(int id, float *& logits) {
-    return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
-}
-
-int ncnn_rwkv_backend::eval(std::vector<int> ids, float *& logits, bool skip_logits_copy) {
-    return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
-}
-
-int ncnn_rwkv_backend::clear_state() {
-    return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
-}
-
-int ncnn_rwkv_backend::get_state(std::any &state) {
-    return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
-}
-
-int ncnn_rwkv_backend::set_state(std::any state) {
-    return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
-}
-
-int ncnn_rwkv_backend::free_state(std::any state) {
-    return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
-}
-
-int ncnn_rwkv_backend::release_model() {
-    return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
-}
-
-int ncnn_rwkv_backend::release() {
-    return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
-}
-
-bool ncnn_rwkv_backend::is_available() {
-    return false;
-}
-
-#endif
 
 } // namespace rwkvmobile

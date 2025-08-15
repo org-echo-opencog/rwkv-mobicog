@@ -16,7 +16,6 @@
 
 namespace rwkvmobile {
 
-#ifdef ENABLE_LLAMACPP
 int llama_cpp_backend::init(void * extra) {
 
     return RWKV_SUCCESS;
@@ -176,54 +175,5 @@ int llama_cpp_backend::release_model() {
 int llama_cpp_backend::release() {
     return RWKV_SUCCESS;
 }
-
-#else
-
-int llama_cpp_backend::init(void * extra) {
-    return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
-}
-
-int llama_cpp_backend::load_model(std::string model_path) {
-    return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
-}
-
-int llama_cpp_backend::eval(int id, float *& logits) {
-    return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
-}
-
-int llama_cpp_backend::eval(std::vector<int> ids, float *& logits, bool skip_logits_copy) {
-    return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
-}
-
-int llama_cpp_backend::clear_state() {
-    return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
-}
-
-int llama_cpp_backend::get_state(std::any &state) {
-    return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
-}
-
-int llama_cpp_backend::set_state(std::any state) {
-    return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
-}
-
-int llama_cpp_backend::free_state(std::any state) {
-    return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
-}
-
-int llama_cpp_backend::release_model() {
-    return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
-}
-
-int llama_cpp_backend::release() {
-    return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
-}
-
-
-bool llama_cpp_backend::is_available() {
-    return false;
-}
-
-#endif
 
 } // namespace rwkvmobile
