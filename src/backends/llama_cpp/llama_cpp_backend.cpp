@@ -17,6 +17,28 @@
 namespace rwkvmobile {
 
 int llama_cpp_backend::init(void * extra) {
+    llama_log_set([](enum ggml_log_level level, const char * text, void * /* user_data */) {
+        std::string log_msg = std::string(text);
+        while (log_msg[log_msg.size() - 1] == '\n') {
+            log_msg = log_msg.substr(0, log_msg.size() - 1);
+        }
+        switch (level) {
+            case GGML_LOG_LEVEL_ERROR:
+                LOGE("%s", log_msg.c_str());
+                break;
+            case GGML_LOG_LEVEL_WARN:
+                LOGW("%s", log_msg.c_str());
+                break;
+            case GGML_LOG_LEVEL_INFO:
+                LOGI("%s", log_msg.c_str());
+                break;
+            case GGML_LOG_LEVEL_DEBUG:
+                LOGD("%s", log_msg.c_str());
+                break;
+            default:
+                break;
+        }
+    }, nullptr);
 
     return RWKV_SUCCESS;
 }
