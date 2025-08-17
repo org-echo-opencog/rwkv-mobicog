@@ -1,8 +1,6 @@
 #ifndef C_API_H
 #define C_API_H
 
-#include <cstdint>
-
 typedef void * rwkvmobile_runtime_t;
 
 struct sampler_params {
