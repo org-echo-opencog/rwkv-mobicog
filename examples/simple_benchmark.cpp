@@ -17,26 +17,27 @@ int main(int argc, char **argv) {
     }
 
     rwkvmobile::runtime runtime;
-    ENSURE_SUCCESS_OR_LOG_EXIT(runtime.init(argv[2]), "Failed to initialize runtime");
-    ENSURE_SUCCESS_OR_LOG_EXIT(runtime.load_model(argv[1]), "Failed to load model");
+    int model_id = runtime.load_model(argv[1], argv[2], "", nullptr);
+    ENSURE_SUCCESS_OR_LOG_EXIT(model_id < 0 ? model_id : rwkvmobile::RWKV_SUCCESS, "Failed to load model");
+    if (model_id < 0) return 1;
 
-    int vocab_size = runtime.get_vocab_size();
+    int vocab_size = runtime.get_vocab_size(model_id);
 
     std::vector<int> prompt_ids(512);
     for (int i = 0; i < 512; i++) {
         prompt_ids[i] = rand() % vocab_size;
     }
     float *logits = nullptr;
-    runtime.eval_logits(prompt_ids, logits);
-    runtime.free_logits_if_allocated(logits);
+    runtime.eval_logits(model_id, prompt_ids, logits);
+    runtime.free_logits_if_allocated(model_id, logits);
 
-    std::cout << "Prefill speed: " << runtime.get_avg_prefill_speed() << " tokens/s" << std::endl;
+    std::cout << "Prefill speed: " << runtime.get_avg_prefill_speed(model_id) << " tokens/s" << std::endl;
 
     for (int i = 0; i < 128; i++) {
-        runtime.eval_logits(rand() % vocab_size, logits);
-        runtime.free_logits_if_allocated(logits);
+        runtime.eval_logits(model_id, rand() % vocab_size, logits);
+        runtime.free_logits_if_allocated(model_id, logits);
     }
-    std::cout << "Decode speed: " << runtime.get_avg_decode_speed() << " tokens/s" << std::endl;
+    std::cout << "Decode speed: " << runtime.get_avg_decode_speed(model_id) << " tokens/s" << std::endl;
 
     runtime.release();
 

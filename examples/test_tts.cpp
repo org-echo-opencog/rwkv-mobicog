@@ -15,9 +15,8 @@ int main(int argc, char **argv) {
         return 1;
     }
     rwkvmobile::runtime runtime;
-    runtime.init(argv[2]);
-    runtime.load_model(argv[1]);
-    runtime.load_tokenizer(argv[3]);
+    int model_id = runtime.load_model(argv[1], argv[2], argv[3], nullptr);
+    if (model_id < 0) return 1;
 
     bool enable_cache = false;
     if (argc == 6) {
@@ -35,7 +34,7 @@ int main(int argc, char **argv) {
     }
 
     for (int i = 0; i < 2; i++) {
-        runtime.run_spark_tts_streaming("他们小心翼翼地调整电路，确保每个部件都正确连接，红灯、绿灯、黄灯依次亮起，仿佛在讲述一个关于交通规则的故事。", "", argv[4], "output.wav");
+        runtime.run_spark_tts_streaming(model_id, "他们小心翼翼地调整电路，确保每个部件都正确连接，红灯、绿灯、黄灯依次亮起，仿佛在讲述一个关于交通规则的故事。", "", argv[4], "output.wav");
     }
     // runtime.run_spark_tts("他们小心翼翼地调整电路，确保每个部件都正确连接，红灯、绿灯、黄灯依次亮起，仿佛在讲述一个关于交通规则的故事。", "", argv[4], "output.wav");
 

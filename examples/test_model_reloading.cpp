@@ -50,8 +50,7 @@ int main(int argc, char **argv) {
     };
 
     rwkvmobile_runtime_t runtime = rwkvmobile_runtime_init_with_name(backend);
-    rwkvmobile_runtime_load_tokenizer(runtime, vocab_file);
-    rwkvmobile_runtime_load_model(runtime, model1);
+    rwkvmobile_runtime_load_model(runtime, model1, backend, vocab_file);
     rwkvmobile_runtime_set_penalty_params(runtime, {0, 0, 0});
     rwkvmobile_runtime_set_sampler_params(runtime, {1.0, 1, 1.0});
 
@@ -65,8 +64,7 @@ int main(int argc, char **argv) {
     rwkvmobile_runtime_release(runtime);
 
     runtime = rwkvmobile_runtime_init_with_name(backend);
-    rwkvmobile_runtime_load_tokenizer(runtime, vocab_file);
-    rwkvmobile_runtime_load_model(runtime, model2);
+    rwkvmobile_runtime_load_model(runtime, model2, backend, vocab_file);
     rwkvmobile_runtime_set_penalty_params(runtime, {0, 0, 0});
     rwkvmobile_runtime_set_sampler_params(runtime, {1.0, 1, 1.0});
 
@@ -80,8 +78,7 @@ int main(int argc, char **argv) {
     rwkvmobile_runtime_release(runtime);
 
     runtime = rwkvmobile_runtime_init_with_name(backend);
-    rwkvmobile_runtime_load_tokenizer(runtime, vocab_file);
-    rwkvmobile_runtime_load_model(runtime, model1);
+    rwkvmobile_runtime_load_model(runtime, model1, backend, vocab_file);
     rwkvmobile_runtime_set_penalty_params(runtime, {0, 0, 0});
     rwkvmobile_runtime_set_sampler_params(runtime, {1.0, 1, 1.0});
 
@@ -95,8 +92,7 @@ int main(int argc, char **argv) {
     rwkvmobile_runtime_release(runtime);
 
     runtime = rwkvmobile_runtime_init_with_name(backend);
-    rwkvmobile_runtime_load_tokenizer(runtime, vocab_file);
-    rwkvmobile_runtime_load_model(runtime, model2);
+    rwkvmobile_runtime_load_model(runtime, model2, backend, vocab_file);
     rwkvmobile_runtime_set_penalty_params(runtime, {0, 0, 0});
     rwkvmobile_runtime_set_sampler_params(runtime, {1.0, 1, 1.0});
 

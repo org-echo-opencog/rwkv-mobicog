@@ -31,8 +31,7 @@ int main(int argc, char **argv) {
     }
 
     rwkvmobile_runtime_t runtime = rwkvmobile_runtime_init_with_name(argv[5]);
-    rwkvmobile_runtime_load_tokenizer(runtime, argv[3]);
-    rwkvmobile_runtime_load_model(runtime, argv[1]);
+    rwkvmobile_runtime_load_model(runtime, argv[1], argv[4], argv[3]);
     rwkvmobile_runtime_load_whisper_encoder(runtime, argv[2]);
     rwkvmobile_runtime_set_eos_token(runtime, "\x17");
     rwkvmobile_runtime_set_bos_token(runtime, "\x16");

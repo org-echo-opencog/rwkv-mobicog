@@ -30,8 +30,7 @@ int main(int argc, char **argv) {
     }
 
     rwkvmobile_runtime_t runtime = rwkvmobile_runtime_init_with_name(argv[6]);
-    rwkvmobile_runtime_load_tokenizer(runtime, argv[4]);
-    rwkvmobile_runtime_load_model(runtime, argv[1]);
+    rwkvmobile_runtime_load_model(runtime, argv[1], argv[5], argv[4]);
     rwkvmobile_runtime_load_vision_encoder_and_adapter(runtime, argv[2], argv[3]);
     rwkvmobile_runtime_set_sampler_params(runtime, {1.0, 1, 1.0});
     rwkvmobile_runtime_set_penalty_params(runtime, {0.0, 0.0, 0.0});

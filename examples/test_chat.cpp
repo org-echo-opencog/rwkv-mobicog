@@ -16,10 +16,10 @@ int main(int argc, char **argv) {
     }
 
     rwkvmobile::runtime runtime;
-    ENSURE_SUCCESS_OR_LOG_EXIT(runtime.init(argv[3]), "Failed to initialize runtime");
-    ENSURE_SUCCESS_OR_LOG_EXIT(runtime.load_tokenizer(argv[1]), "Failed to load tokenizer");
-    ENSURE_SUCCESS_OR_LOG_EXIT(runtime.load_model(argv[2]), "Failed to load model");
-    runtime.set_sampler_params(1.0, 1, 1.0);
+    int model_id = runtime.load_model(argv[2], argv[3], argv[1], nullptr);
+    ENSURE_SUCCESS_OR_LOG_EXIT(model_id < 0 ? model_id : rwkvmobile::RWKV_SUCCESS, "Failed to load model");
+    if (model_id < 0) return 1;
+    runtime.set_sampler_params(model_id, 1.0, 1, 1.0);
 
     std::cout << "Testing original input list" << std::endl << std::endl;
     std::vector<std::string> input_list = {
@@ -27,8 +27,8 @@ int main(int argc, char **argv) {
         "Hello! I'm your AI assistant. I'm here to help you with various tasks, such as answering questions, brainstorming ideas, drafting emails, writing code, providing advice, and much more.",
         "What's the weather like today?",
     };
-    runtime.chat(input_list, 50, nullptr);
-    std::cout << "Response: " << runtime.get_response_buffer_content() << std::endl;
+    runtime.chat(model_id, input_list, 50, nullptr);
+    std::cout << "Response: " << runtime.get_response_buffer_content(model_id) << std::endl;
 
     std::cout << "Testing new input list" << std::endl << std::endl;
     input_list = {
@@ -36,8 +36,8 @@ int main(int argc, char **argv) {
         "Hello! I'm your AI assistant. I'm here to help you with various tasks, such as answering questions, brainstorming ideas, drafting emails, writing code, providing advice, and much more.",
         "Write me a poem",
     };
-    runtime.chat(input_list, 50, nullptr);
-    std::cout << "Response: " << runtime.get_response_buffer_content() << std::endl;
+    runtime.chat(model_id, input_list, 50, nullptr);
+    std::cout << "Response: " << runtime.get_response_buffer_content(model_id) << std::endl;
 
     std::cout << "Testing original input list" << std::endl << std::endl;
     input_list = {
@@ -45,8 +45,8 @@ int main(int argc, char **argv) {
         "Hello! I'm your AI assistant. I'm here to help you with various tasks, such as answering questions, brainstorming ideas, drafting emails, writing code, providing advice, and much more.",
         "What's the weather like today?",
     };
-    runtime.chat(input_list, 50, nullptr);
-    std::cout << "Response: " << runtime.get_response_buffer_content() << std::endl;
+    runtime.chat(model_id, input_list, 50, nullptr);
+    std::cout << "Response: " << runtime.get_response_buffer_content(model_id) << std::endl;
 
     std::cout << std::endl;
 

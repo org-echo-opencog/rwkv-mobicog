@@ -33,6 +33,43 @@
 
 namespace rwkvmobile {
 
+// Forward declaration
+class runtime;
+
+struct ModelInstance {
+    std::string model_path;
+    std::string backend_name;
+    std::string tokenizer_path;
+    std::unique_ptr<execution_provider, std::function<void(execution_provider*)>> backend;
+    std::unique_ptr<tokenizer_base, std::function<void(tokenizer_base*)>> tokenizer;
+    std::unique_ptr<NucleusSampler> sampler;
+    // Add other per-model states here, e.g., chat templates, stop codes etc.
+    std::string user_role = "User";
+    std::string response_role = "Assistant";
+    std::string bos_token = "";
+    std::string eos_token = "\n\n";
+    std::vector<std::string> stop_codes = {"\n\n", "\nUser", "User"};
+    std::string thinking_token = "<think";
+    int64_t seed = 42;
+
+    // Response buffer
+    std::string response_buffer;
+    std::vector<int32_t> response_buffer_ids;
+    bool response_buffer_eos_found = false;
+
+    // Generation status
+    std::string prompt;
+    bool is_generating = false;
+    bool stop_signal = false;
+
+#ifdef ENABLE_VISION
+    std::unique_ptr<clip_ctx, std::function<void(clip_ctx*)>> vision_encoder;
+#endif
+#ifdef ENABLE_WHISPER
+    std::unique_ptr<whisper_context, std::function<void(whisper_context*)>> whisper_encoder;
+#endif
+};
+
 class runtime {
 public:
     runtime() {
@@ -42,46 +79,41 @@ public:
         _soc_detect.detect_platform();
     };
     ~runtime() {};
-    int init(std::string backend_name);
-    int init(int backend_id);
-    int init(std::string backend_name, void * extra);
-    int init(int backend_id, void * extra);
-    int load_model(std::string model_path);
-    int load_tokenizer(std::string vocab_file);
-    int load_vision_encoder(std::string model_path, std::string adapter_path = "");
-    int load_whisper_encoder(std::string model_path);
-    int eval_logits(int id, float *& logits);
-    int eval_logits(std::vector<int> ids, float *& logits);
-    int eval_logits_with_embeddings(const float *embeddings, int n_tokens, float *& logits);
-    void free_logits_if_allocated(float *& logits) {
-        if (_backend != nullptr) {
-            _backend->free_logits_if_allocated(logits);
-        }
-    }
+    int load_model(std::string model_path, std::string backend_name, std::string tokenizer_path, void * extra);
+    int unload_model(int model_id);
+
+    int eval_logits(int model_id, int id, float *& logits);
+    int eval_logits(int model_id, std::vector<int> ids, float *& logits);
+    int eval_logits_with_embeddings(int model_id, const float *embeddings, int n_tokens, float *& logits);
+    void free_logits_if_allocated(int model_id, float *& logits);
 
     // without history
-    int chat(std::string input, const int max_length, void (*callback)(const char *, const int, const char *) = nullptr, bool enable_reasoning = false);
+    int chat(int model_id, std::string input, const int max_length, void (*callback)(const char *, const int, const char *) = nullptr, bool enable_reasoning = false);
 
     // with history
-    int chat(std::vector<std::string> inputs, const int max_length, void (*callback)(const char *, const int, const char *) = nullptr, bool enable_reasoning = false);
-    int gen_completion(std::string prompt, int max_length, int stop_code, void (*callback)(const char *, const int, const char *));
+    int chat(int model_id, std::vector<std::string> inputs, const int max_length, void (*callback)(const char *, const int, const char *) = nullptr, bool enable_reasoning = false);
+    int gen_completion(int model_id, std::string prompt, int max_length, int stop_code, void (*callback)(const char *, const int, const char *));
 
-    int set_prompt(std::string prompt);
-    std::string get_prompt();
+    int set_prompt(int model_id, std::string prompt);
+    std::string get_prompt(int model_id);
 
-    int load_initial_state(std::string state_path);
-    void clear_initial_state();
+    int load_initial_state(int model_id, std::string state_path);
+    void clear_initial_state(int model_id);
 
-    std::string get_response_buffer_content() { return _response_buffer; }
-    const std::vector<int32_t> get_response_buffer_ids() { return _response_buffer_ids; }
-    void clear_response_buffer() { _response_buffer = ""; _response_buffer_ids.clear(); }
-    bool get_response_buffer_eos_found() { return _response_buffer_eos_found; }
+    std::string get_response_buffer_content(int model_id);
+    const std::vector<int32_t> get_response_buffer_ids(int model_id);
+    void clear_response_buffer(int model_id);
+    bool get_response_buffer_eos_found(int model_id);
 #ifdef ENABLE_VISION
-    int set_image_prompt(std::string path);
+    int load_vision_encoder(int model_id, std::string model_path, std::string adapter_path = "");
+    int release_vision_encoder(int model_id);
+    int set_image_prompt(int model_id, std::string path);
 #endif
 
 #ifdef ENABLE_WHISPER
-    int set_audio_prompt(std::string path);
+    int load_whisper_encoder(int model_id, std::string model_path);
+    int release_whisper_encoder(int model_id);
+    int set_audio_prompt(int model_id, std::string path);
 #endif
 
 #ifdef ENABLE_TTS
@@ -93,8 +125,8 @@ public:
 
     int sparktts_release_models();
 
-    int run_spark_tts(std::string tts_text, std::string prompt_audio_text, std::string prompt_audio_path, std::string output_wav_path);
-    int run_spark_tts_streaming(std::string tts_text, std::string prompt_audio_text, std::string prompt_audio_path, std::string output_wav_path);
+    int run_spark_tts(int model_id, std::string tts_text, std::string prompt_audio_text, std::string prompt_audio_path, std::string output_wav_path);
+    int run_spark_tts_streaming(int model_id, std::string tts_text, std::string prompt_audio_text, std::string prompt_audio_path, std::string output_wav_path);
 
     std::vector<float>& tts_get_streaming_buffer() {
         return _tts_output_samples_buffer;
@@ -121,109 +153,56 @@ public:
 #endif
 
     // for state management
-    int clear_state() {
-        if (_backend == nullptr) {
-            return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
-        }
+    int clear_state(int model_id);
 
-        if (sampler != nullptr) {
-            sampler->clear_occurences();
-        }
-        _backend->clear_state();
-        return RWKV_SUCCESS;
-    }
+    int release();
 
-    int release() {
-        if (_backend == nullptr) {
-            return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
-        }
-        clear_state();
-        int ret = _backend->release_model();
-        if (ret != RWKV_SUCCESS) {
-            return ret;
-        }
-        _tokenizer = nullptr;
-        sampler = nullptr;
-        return _backend->release();
-    }
+    int set_seed(int model_id, int64_t seed);
 
-    int release_vision_encoder();
-    int release_whisper_encoder();
+    int64_t get_seed(int model_id);
 
-    inline int set_seed(int64_t seed) {
-        if (sampler == nullptr) {
-            return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
-        }
-        sampler->set_seed(seed);
-        _seed = seed;
-        return 0;
-    }
+    void set_user_role(int model_id, std::string role);
+    void set_response_role(int model_id, std::string role);
+    void set_bos_token(int model_id, std::string token);
+    void set_eos_token(int model_id, std::string token);
+    std::string get_user_role(int model_id);
+    std::string get_response_role(int model_id);
+    std::string get_bos_token(int model_id);
+    std::string get_eos_token(int model_id);
 
-    inline int64_t get_seed() { return _seed; }
+    std::string apply_chat_template(int model_id, std::vector<std::string> inputs, bool enable_reasoning = false);
 
-    inline void set_user_role(std::string role) { _user_role = role; }
-    inline void set_response_role(std::string role) { _response_role = role; }
-    inline void set_bos_token(std::string token) { _bos_token = token; }
-    inline void set_eos_token(std::string token) {
-        _eos_token = token;
-        _stop_codes[0] = _eos_token;
-    }
-    std::string get_user_role() { return _user_role; }
-    std::string get_response_role() { return _response_role; }
-    std::string get_bos_token() { return _bos_token; }
-    std::string get_eos_token() { return _eos_token; }
+    int get_vocab_size(int model_id);
 
-    std::string apply_chat_template(std::vector<std::string> inputs, bool enable_reasoning = false);
+    std::vector<std::string> get_stop_codes(int model_id);
+    void set_stop_codes(int model_id, std::vector<std::string> stop_codes);
+    std::string get_thinking_token(int model_id);
+    void set_thinking_token(int model_id, std::string thinking_token);
 
-    int get_vocab_size() { return _vocab_size; }
+    void set_sampler_params(int model_id, float temperature, int top_k, float top_p);
 
-    inline std::vector<std::string> get_stop_codes() { return _stop_codes; }
-    inline void set_stop_codes(std::vector<std::string> stop_codes) { _stop_codes = stop_codes; }
-    inline std::string get_thinking_token() { return _thinking_token; }
-    inline void set_thinking_token(std::string thinking_token) { _thinking_token = thinking_token; }
+    void set_penalty_params(int model_id, float presence_penalty, float frequency_penalty, float penalty_decay);
+    float get_temperature(int model_id);
+    int get_top_k(int model_id);
+    float get_top_p(int model_id);
+    float get_presence_penalty(int model_id);
+    float get_frequency_penalty(int model_id);
+    float get_penalty_decay(int model_id);
 
-    inline void set_sampler_params(float temperature, int top_k, float top_p) {
-        if (sampler == nullptr) {
-            LOGE("Sampler not initialized\n");
-            return;
-        }
-        LOGD("Setting sampler params: temperature=%f, top_k=%d, top_p=%f\n", temperature, top_k, top_p);
-        sampler->set_temperature(temperature);
-        sampler->set_top_k(top_k);
-        sampler->set_top_p(top_p);
-    }
+    void set_token_banned(int model_id, std::vector<int> token_banned);
 
-    inline void set_penalty_params(float presence_penalty, float frequency_penalty, float penalty_decay) {
-        if (sampler == nullptr) {
-            LOGE("Sampler not initialized\n");
-            return;
-        }
-        LOGD("Setting penalty params: presence_penalty=%f, frequency_penalty=%f, penalty_decay=%f\n", presence_penalty, frequency_penalty, penalty_decay);
-        sampler->set_presence_penalty(presence_penalty);
-        sampler->set_frequency_penalty(frequency_penalty);
-        sampler->set_penalty_decay(penalty_decay);
-    }
+    bool is_generating(int model_id);
+    void set_is_generating(int model_id, bool is_generating);
 
-    void set_token_banned(std::vector<int> token_banned) {
-        if (sampler == nullptr) {
-            LOGE("Sampler not initialized\n");
-            return;
-        }
-        sampler->set_token_banned(token_banned);
-    }
-
-    inline bool is_generating() { return _is_generating; }
-    inline void set_is_generating(bool is_generating) { _is_generating = is_generating; }
-
-    inline bool get_stop_signal() { return _stop_signal; }
-    inline void set_stop_signal(bool stop_signal) { _stop_signal = stop_signal; }
+    bool get_stop_signal(int model_id);
+    void set_stop_signal(int model_id, bool stop_signal);
 
     std::string get_available_backends_str();
     int get_available_backend_ids(std::vector<int> &backend_ids);
 
-    double get_avg_decode_speed();
-    double get_avg_prefill_speed();
-    double get_prefill_progress() { return _prefill_progress; }
+    double get_avg_decode_speed(int model_id);
+    double get_avg_prefill_speed(int model_id);
+    double get_prefill_progress(int model_id);
 
     int load_embedding_model(std::string model_path) {
         if (_embedding == nullptr) {
@@ -291,47 +270,28 @@ public:
         return backend_str_to_enum(backend_str);
     }
 
-    void backend_set_extra_str(std::string str) {
-        _backend->extra_str = str;
-    }
+    void backend_set_extra_str(int model_id, std::string str);
 
     // tokenizer
-    std::vector<int> tokenizer_encode(std::string text) {
-        if (_tokenizer == nullptr) {
-            return {};
-        }
-        return _tokenizer->encode(text);
-    }
+    std::vector<int> tokenizer_encode(int model_id, std::string text);
 
-    std::string tokenizer_decode(std::vector<int> ids) {
-        if (_tokenizer == nullptr) {
-            return "";
-        }
-        return _tokenizer->decode(ids);
-    }
+    std::string tokenizer_decode(int model_id, std::vector<int> ids);
 
-    std::string tokenizer_decode(int id) {
-        if (_tokenizer == nullptr) {
-            return "";
-        }
-        return _tokenizer->decode(id);
-    }
+    std::string tokenizer_decode(int model_id, int id);
 
     // sampler
-    int sampler_sample(std::vector<float> logits) {
-        if (sampler == nullptr) {
-            return -1;
-        }
-        return sampler->sample(logits.data(), logits.size());
-    }
+    int sampler_sample(int model_id, std::vector<float> logits);
+
+    // 获取已加载模型列表
+    std::vector<int> get_loaded_model_ids();
+    std::map<int, std::map<std::string, std::string>> get_loaded_models_info();
 
     inline void set_cache_dir(std::string cache_dir) { _cache_dir = cache_dir; }
 
-    std::unique_ptr<NucleusSampler> sampler;
-
 private:
-    std::unique_ptr<execution_provider, std::function<void(execution_provider*)>> _backend;
-    std::unique_ptr<tokenizer_base, std::function<void(tokenizer_base*)>> _tokenizer;
+    std::map<int, std::unique_ptr<ModelInstance>> _models;
+    int _next_model_id = 0;
+    
     std::unique_ptr<rwkv_embedding> _embedding;
 
     double _prefill_speed = -1;
@@ -360,32 +320,7 @@ private:
 
     int _vocab_size = 0;
 
-    int64_t _seed = 42;
-    std::string _user_role = "User";
-    std::string _response_role = "Assistant";
-    std::string _prompt;
-    std::string _thinking_token = "<think";
-
-    bool _is_generating = false;
-    bool _stop_signal = false;
-
     std::thread _prefilling_thread;
-
-    std::vector<std::string> _stop_codes = {"\n\n", "\nUser", "User"};
-    std::string _bos_token = "";
-    std::string _eos_token = "\n\n";
-
-    std::string _response_buffer;
-    std::vector<int32_t> _response_buffer_ids;
-    bool _response_buffer_eos_found = false;
-
-#ifdef ENABLE_VISION
-    std::unique_ptr<clip_ctx, std::function<void(clip_ctx*)>> _vision_encoder;
-#endif
-
-#ifdef ENABLE_WHISPER
-    std::unique_ptr<whisper_context, std::function<void(whisper_context*)>> _whisper_encoder;
-#endif
 
 #ifdef ENABLE_TTS
     std::unique_ptr<sparktts> _sparktts;
@@ -397,6 +332,6 @@ private:
 #endif
 };
 
-}
+} // namespace rwkvmobile
 
 #endif

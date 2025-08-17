@@ -1,6 +1,8 @@
 #ifndef C_API_H
 #define C_API_H
 
+#include <cstdint>
+
 typedef void * rwkvmobile_runtime_t;
 
 struct sampler_params {
@@ -31,11 +33,32 @@ struct tts_streaming_buffer {
     int length;
 };
 
+struct model_info {
+    int model_id;
+    char * model_path;
+    char * backend_name;
+    char * tokenizer_path;
+    char * user_role;
+    char * response_role;
+    char * bos_token;
+    char * eos_token;
+    char * thinking_token;
+    int is_generating;
+    int vocab_size;
+};
+
+struct loaded_models_list {
+    struct model_info * models;
+    int count;
+};
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 int rwkvmobile_runtime_get_available_backend_names(char * backend_names_buffer, int buffer_size);
+
+rwkvmobile_runtime_t rwkvmobile_runtime_init();
 
 rwkvmobile_runtime_t rwkvmobile_runtime_init_with_name(const char * backend_name);
 
@@ -43,9 +66,11 @@ rwkvmobile_runtime_t rwkvmobile_runtime_init_with_name_extra(const char * backen
 
 int rwkvmobile_runtime_release(rwkvmobile_runtime_t runtime);
 
-int rwkvmobile_runtime_load_model(rwkvmobile_runtime_t runtime, const char * model_path);
+int rwkvmobile_runtime_load_model(rwkvmobile_runtime_t runtime, const char * model_path, const char * backend_name, const char * tokenizer_path);
 
-int rwkvmobile_runtime_load_tokenizer(rwkvmobile_runtime_t runtime, const char * vocab_file);
+int rwkvmobile_runtime_load_model_with_extra(rwkvmobile_runtime_t runtime, const char * model_path, const char * backend_name, const char * tokenizer_path, void * extra);
+
+int rwkvmobile_runtime_release_model(rwkvmobile_runtime_t runtime, int model_id);
 
 int rwkvmobile_runtime_eval_logits(rwkvmobile_runtime_t runtime, const int *ids, int ids_len, float * logits, int logits_len);
 
@@ -165,6 +190,13 @@ const char * rwkvmobile_dump_log();
 void rwkvmobile_set_loglevel(int loglevel);
 
 void rwkvmobile_set_cache_dir(rwkvmobile_runtime_t runtime, const char * cache_dir);
+
+// 获取已加载模型列表
+int rwkvmobile_runtime_get_loaded_model_ids(rwkvmobile_runtime_t runtime, int * model_ids, int max_count);
+
+struct loaded_models_list rwkvmobile_runtime_get_loaded_models_info(rwkvmobile_runtime_t runtime);
+
+void rwkvmobile_runtime_free_loaded_models_list(struct loaded_models_list list);
 
 #ifdef __cplusplus
 }
