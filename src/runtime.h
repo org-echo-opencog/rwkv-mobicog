@@ -282,7 +282,7 @@ public:
     // sampler
     int sampler_sample(int model_id, std::vector<float> logits);
 
-    // 获取已加载模型列表
+    // get loaded models info
     std::vector<int> get_loaded_model_ids();
     std::map<int, std::map<std::string, std::string>> get_loaded_models_info();
 
@@ -291,7 +291,7 @@ public:
 private:
     std::map<int, std::unique_ptr<ModelInstance>> _models;
     int _next_model_id = 0;
-    
+
     std::unique_ptr<rwkv_embedding> _embedding;
 
     double _prefill_speed = -1;

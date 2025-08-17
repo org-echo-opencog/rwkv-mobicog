@@ -204,8 +204,8 @@ int runtime::unload_model(int model_id) {
     return RWKV_SUCCESS;
 }
 
-int runtime::load_vision_encoder(int model_id, std::string model_path, std::string adapter_path) {
 #ifdef ENABLE_VISION
+int runtime::load_vision_encoder(int model_id, std::string model_path, std::string adapter_path) {
     if (_models.find(model_id) == _models.end()) {
         return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
     }
@@ -219,26 +219,20 @@ int runtime::load_vision_encoder(int model_id, std::string model_path, std::stri
         return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
     }
     return RWKV_SUCCESS;
-#else
-    return RWKV_ERROR_RUNTIME | RWKV_ERROR_UNSUPPORTED;
-#endif
 }
 
 int runtime::release_vision_encoder(int model_id) {
-#ifdef ENABLE_VISION
     if (_models.find(model_id) == _models.end()) {
         return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
     }
     auto &model = _models.at(model_id);
     model->vision_encoder = nullptr;
     return RWKV_SUCCESS;
-#else
-    return RWKV_ERROR_RUNTIME | RWKV_ERROR_UNSUPPORTED;
-#endif
 }
+#endif
 
-int runtime::load_whisper_encoder(int model_id, std::string model_path) {
 #ifdef ENABLE_WHISPER
+int runtime::load_whisper_encoder(int model_id, std::string model_path) {
     if (_models.find(model_id) == _models.end()) {
         return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
     }
@@ -253,23 +247,17 @@ int runtime::load_whisper_encoder(int model_id, std::string model_path) {
     }
     whisper_init_state(model->whisper_encoder.get());
     return RWKV_SUCCESS;
-#else
-    return RWKV_ERROR_RUNTIME | RWKV_ERROR_UNSUPPORTED;
-#endif
 }
 
 int runtime::release_whisper_encoder(int model_id) {
-#ifdef ENABLE_WHISPER
     if (_models.find(model_id) == _models.end()) {
         return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
     }
     auto &model = _models.at(model_id);
     model->whisper_encoder = nullptr;
     return RWKV_SUCCESS;
-#else
-    return RWKV_ERROR_RUNTIME | RWKV_ERROR_UNSUPPORTED;
-#endif
 }
+#endif
 
 int runtime::get_available_backend_ids(std::vector<int> &backend_ids) {
     backend_ids = std::vector<int>();
