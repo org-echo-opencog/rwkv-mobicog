@@ -22,6 +22,10 @@ void custom_sleep(int seconds) {
 #endif
 }
 
+const char *prompt_list[] = {
+    "",
+};
+
 int main(int argc, char **argv) {
     // set stdout to be unbuffered
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -40,7 +44,7 @@ int main(int argc, char **argv) {
 
     rwkvmobile_runtime_set_audio_prompt(runtime, argv[4]);
 
-    rwkvmobile_runtime_eval_chat_with_history_async(runtime, (const char *[]){""}, 1, 100, nullptr, 0);
+    rwkvmobile_runtime_eval_chat_with_history_async(runtime, prompt_list, 1, 100, nullptr, 0);
 
     while (rwkvmobile_runtime_is_generating(runtime)) {
         custom_sleep(1);

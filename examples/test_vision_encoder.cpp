@@ -19,6 +19,10 @@ void custom_sleep(int seconds) {
 #endif
 }
 
+const char *prompt_list[] = {
+    "What is written on this image?",
+};
+
 int main(int argc, char **argv) {
     // set stdout to be unbuffered
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -38,7 +42,9 @@ int main(int argc, char **argv) {
 
     rwkvmobile_runtime_set_image_prompt(runtime, argv[4]);
 
-    rwkvmobile_runtime_eval_chat_with_history_async(runtime, (const char *[]){"What is written on this image?"}, 1, 500, nullptr, 0);
+
+
+    rwkvmobile_runtime_eval_chat_with_history_async(runtime, prompt_list, 1, 500, nullptr, 0);
 
     while (rwkvmobile_runtime_is_generating(runtime)) {
         custom_sleep(1);
