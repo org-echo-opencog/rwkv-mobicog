@@ -14,10 +14,6 @@ public:
     struct state_node * next = nullptr;
 
     state_node() {
-        state = nullptr;
-        ids = {};
-        last_logits = {};
-        next = nullptr;
     }
 
     ~state_node() {
@@ -29,7 +25,6 @@ public:
     inline void delete_after() {
         while (next) {
             auto tmp = next->next;
-            // free_state(next->state);
             next->state.reset();
             delete next;
             next = tmp;
