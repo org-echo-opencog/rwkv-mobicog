@@ -80,7 +80,7 @@ public:
     };
     ~runtime() {};
     int load_model(std::string model_path, std::string backend_name, std::string tokenizer_path, void * extra);
-    int unload_model(int model_id);
+    int release_model(int model_id);
 
     int eval_logits(int model_id, int id, float *& logits);
     int eval_logits(int model_id, std::vector<int> ids, float *& logits);

@@ -154,7 +154,7 @@ int runtime::load_model(std::string model_path, std::string backend_name, std::s
         LOGE("Unsupported backend: %s\n", backend_name.c_str());
         return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
     }
-    
+
     int ret = model_instance->backend->init(extra);
     if (ret) {
         LOGE("Failed to initialize backend: %s, errno = %d\n", backend_name.c_str(), ret);
@@ -196,7 +196,7 @@ int runtime::load_model(std::string model_path, std::string backend_name, std::s
     return model_id;
 }
 
-int runtime::unload_model(int model_id) {
+int runtime::release_model(int model_id) {
     if (_models.find(model_id) == _models.end()) {
         return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
     }
@@ -465,13 +465,6 @@ std::string runtime::apply_chat_template(int model_id, std::vector<std::string> 
     }
     return text;
 }
-
-// Overload for single string input
-int runtime::chat(int model_id, std::string input, const int max_length, void (*callback)(const char *, const int, const char *), bool enable_reasoning) {
-    std::vector<std::string> inputs = {input};
-    return chat(model_id, inputs, max_length, callback, enable_reasoning);
-}
-
 
 int runtime::chat(int model_id, std::vector<std::string> inputs, const int max_length, void (*callback)(const char *, const int, const char *), bool enable_reasoning) {
     if (_models.find(model_id) == _models.end()) {

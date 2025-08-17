@@ -16,15 +16,6 @@ rwkvmobile_runtime_t rwkvmobile_runtime_init() {
     return rt;
 }
 
-rwkvmobile_runtime_t rwkvmobile_runtime_init_with_name(const char * backend_name) {
-    return rwkvmobile_runtime_init_with_name_extra(backend_name, nullptr);
-}
-
-rwkvmobile_runtime_t rwkvmobile_runtime_init_with_name_extra(const char * backend_name, void * extra) {
-    runtime * rt = new runtime();
-    return rt;
-}
-
 int rwkvmobile_runtime_release(rwkvmobile_runtime_t handle) {
     if (handle == nullptr) {
         return RWKV_ERROR_INVALID_PARAMETERS;
@@ -47,6 +38,14 @@ int rwkvmobile_runtime_load_model_with_extra(rwkvmobile_runtime_t handle, const 
     return rt->load_model(model_path, backend_name, tokenizer_path, extra);
 }
 
+int rwkvmobile_runtime_release_model(rwkvmobile_runtime_t handle, int model_id) {
+    if (handle == nullptr || model_id < 0) {
+        return RWKV_ERROR_INVALID_PARAMETERS;
+    }
+    auto rt = static_cast<class runtime *>(handle);
+    return rt->release_model(model_id);
+}
+
 int rwkvmobile_runtime_eval_logits(rwkvmobile_runtime_t handle, const int * ids, int ids_len, float * logits, int logits_len) {
     if (handle == nullptr || ids == nullptr || logits == nullptr || ids_len <= 0 || logits_len <= 0) {
         return RWKV_ERROR_INVALID_PARAMETERS;
@@ -60,33 +59,6 @@ int rwkvmobile_runtime_eval_logits(rwkvmobile_runtime_t handle, const int * ids,
     }
     memcpy(logits, logits_ret, logits_len * sizeof(float));
     rt->free_logits_if_allocated(0, logits_ret);
-    return RWKV_SUCCESS;
-}
-
-int rwkvmobile_runtime_eval_chat_async(
-    rwkvmobile_runtime_t handle,
-    const char * input,
-    const int max_tokens,
-    void (*callback)(const char *, const int, const char *),
-    int enable_reasoning) {
-    if (handle == nullptr || input == nullptr || max_tokens <= 0) {
-        return RWKV_ERROR_INVALID_PARAMETERS;
-    }
-
-    auto rt = static_cast<class runtime *>(handle);
-    rt->set_is_generating(0, true);
-    std::thread generation_thread([=]() {
-        int ret = rt->chat(
-            0,
-            std::string(input),
-            max_tokens,
-            callback,
-            enable_reasoning != 0);
-        return ret;
-    });
-
-    generation_thread.detach();
-
     return RWKV_SUCCESS;
 }
 

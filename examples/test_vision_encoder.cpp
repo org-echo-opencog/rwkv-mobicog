@@ -27,8 +27,8 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    rwkvmobile_runtime_t runtime = rwkvmobile_runtime_init_with_name(argv[5]);
-    rwkvmobile_runtime_load_model(runtime, argv[1], argv[4], argv[3]);
+    rwkvmobile_runtime_t runtime = rwkvmobile_runtime_init();
+    rwkvmobile_runtime_load_model(runtime, argv[1], argv[5], argv[3]);
     rwkvmobile_runtime_load_vision_encoder(runtime, argv[2]);
     rwkvmobile_runtime_set_sampler_params(runtime, {1.0, 1, 1.0});
     rwkvmobile_runtime_set_penalty_params(runtime, {0.0, 0.0, 0.0});
@@ -38,7 +38,7 @@ int main(int argc, char **argv) {
 
     rwkvmobile_runtime_set_image_prompt(runtime, argv[4]);
 
-    rwkvmobile_runtime_eval_chat_async(runtime, "What is written on this image?", 500, nullptr, 0);
+    rwkvmobile_runtime_eval_chat_with_history_async(runtime, (const char *[]){"What is written on this image?"}, 1, 500, nullptr, 0);
 
     while (rwkvmobile_runtime_is_generating(runtime)) {
         custom_sleep(1);

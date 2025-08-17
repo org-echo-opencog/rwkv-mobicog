@@ -63,7 +63,7 @@ int main(int argc, char **argv) {
     std::cout << "=== RWKV Mobile Loaded Models API Test ===" << std::endl;
     
     // Create runtime
-    rwkvmobile_runtime_t runtime = rwkvmobile_runtime_init_with_name(argv[3]);
+    rwkvmobile_runtime_t runtime = rwkvmobile_runtime_init();
     if (runtime == nullptr) {
         std::cerr << "Failed to initialize runtime" << std::endl;
         return 1;
@@ -89,13 +89,10 @@ int main(int argc, char **argv) {
     // This is just an example, modify model path as needed in actual use
     if (argc > 4) {
         std::cout << "Loading second model..." << std::endl;
-        int ret2 = rwkvmobile_runtime_load_model(runtime, argv[4], argv[3], argv[1]);
-        if (ret2 == rwkvmobile::RWKV_SUCCESS) {
-            std::cout << "Second model loaded successfully" << std::endl;
-            test_get_loaded_models_info(runtime);
-        } else {
-            std::cout << "Failed to load second model, continuing test..." << std::endl;
-        }
+        int model_id = rwkvmobile_runtime_load_model(runtime, argv[4], argv[3], argv[1]);
+        ENSURE_SUCCESS_OR_LOG_EXIT(model_id < 0 ? model_id : rwkvmobile::RWKV_SUCCESS, "Failed to load model");
+        std::cout << "Second model loaded successfully" << std::endl;
+        test_get_loaded_models_info(runtime);
     }
     
     // Release runtime

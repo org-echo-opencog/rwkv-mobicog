@@ -60,10 +60,6 @@ int rwkvmobile_runtime_get_available_backend_names(char * backend_names_buffer, 
 
 rwkvmobile_runtime_t rwkvmobile_runtime_init();
 
-rwkvmobile_runtime_t rwkvmobile_runtime_init_with_name(const char * backend_name);
-
-rwkvmobile_runtime_t rwkvmobile_runtime_init_with_name_extra(const char * backend_name, void * extra);
-
 int rwkvmobile_runtime_release(rwkvmobile_runtime_t runtime);
 
 int rwkvmobile_runtime_load_model(rwkvmobile_runtime_t runtime, const char * model_path, const char * backend_name, const char * tokenizer_path);
@@ -73,8 +69,6 @@ int rwkvmobile_runtime_load_model_with_extra(rwkvmobile_runtime_t runtime, const
 int rwkvmobile_runtime_release_model(rwkvmobile_runtime_t runtime, int model_id);
 
 int rwkvmobile_runtime_eval_logits(rwkvmobile_runtime_t runtime, const int *ids, int ids_len, float * logits, int logits_len);
-
-int rwkvmobile_runtime_eval_chat_async(rwkvmobile_runtime_t runtime, const char * input, const int max_tokens, void (*callback)(const char *, const int, const char *), int enable_reasoning);
 
 int rwkvmobile_runtime_eval_chat_with_history_async(rwkvmobile_runtime_t handle, const char ** inputs, const int num_inputs, const int max_tokens, void (*callback)(const char *, const int, const char *), int enable_reasoning);
 
