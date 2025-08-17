@@ -80,7 +80,7 @@ void RMPack::loadFile() {
     if (file_->fail()) {
         throw std::runtime_error("failed to read config");
     }
-    
+
     try {
         std::string config_str(config_buffer.begin(), config_buffer.end());
         config_ = json::parse(config_str);
@@ -119,7 +119,7 @@ void RMPack::loadFile() {
         if (file_->fail()) {
             throw std::runtime_error("failed to read file offset");
         }
-        
+
         files_.push_back(file_info);
     }
 }
@@ -162,7 +162,7 @@ void* RMPack::mmapFile(const std::string& filename) {
     mmap_info.addr = addr;
     mmap_info.size = file_info->size;
     mmap_mappings_[filename] = mmap_info;
-    
+
     return addr;
 #else
     return nullptr;
@@ -191,15 +191,15 @@ void* RMPack::readFileToMemory(const std::string& filename) {
     }
 
     const FileInfo* file_info = getFileInfo(filename);
-    if (!file_info) { 
+    if (!file_info) {
         throw std::runtime_error("file not found: " + filename);
     }
-    
+
     char* data = new char[file_info->size];
 
     auto current_pos = file_->tellg();
     file_->seekg(file_info->offset, std::ios::beg);
-    
+
     if (file_->fail()) {
         delete[] data;
         throw std::runtime_error("failed to seek file: " + filename);
@@ -251,7 +251,7 @@ void RMPack::listFiles() const {
     }
     std::cout << "文件列表:" << std::endl;
     for (const auto& file : files_) {
-        std::cout << "  " << file.filename << " (大小: " << file.size 
+        std::cout << "  " << file.filename << " (大小: " << file.size
                   << " 字节, 偏移: " << file.offset << ")" << std::endl;
     }
 }

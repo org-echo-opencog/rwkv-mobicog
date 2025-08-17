@@ -27,7 +27,7 @@ class Rwkv5SelfAttention(nn.Module):
             tf = state_dict[prefix + 'time_faaaa'].reshape(-1, 1, 1)
         except:
             tf = torch.exp(state_dict[prefix + 'time_first'].float()).reshape(-1, 1, 1)
-        
+
         if version == 5.2:
             tf = tf.reshape(self.num_heads, -1, 1)
         self.time_first = nn.Parameter(tf)
@@ -99,14 +99,14 @@ class Rwkv5SelfAttention(nn.Module):
         self.exp0                   = op.Exponential()
         self.exp1                   = op.Exponential()
         self.neg                    = op.Neg()
-    
+
     def forward(self, x, state1, state2):
         last_x = x
         x = self.ln_1(x)
         x = self.mul_ln_1(x, self.ln_1_w)
         x = self.add_ln_1(x, self.ln_1_b)
         state1_out = x
-        
+
         xk = self.mul_time_mix_k_1(state1, self.sub_time_mix_k(1, self.time_mix_k))
         xk = self.add_time_mix_k(xk, self.mul_time_mix_k_2(x, self.time_mix_k))
 

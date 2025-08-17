@@ -219,7 +219,7 @@ public:
   /// \param      f_min         lowest frequency (in Hz)
   /// \param      f_max         highest frequency (in Hz)
   /// \return     mel spectrogram matrix
-  static std::vector<std::vector<float>> melspectrogram(std::vector<float> &x, int sr, 
+  static std::vector<std::vector<float>> melspectrogram(std::vector<float> &x, int sr,
                                                         int n_fft, int n_hop, const std::string &win, bool center, const std::string &mode,
                                                         float power, int n_mels, int fmin, int fmax, bool return_magnitude = false){
     Vectorf map_x = Eigen::Map<Vectorf>(x.data(), x.size());

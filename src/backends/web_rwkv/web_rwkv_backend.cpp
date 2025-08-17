@@ -20,7 +20,7 @@ int web_rwkv_backend::load_model(std::string model_path) {
     int ret = 0;
     if (model_path.find("prefab") != std::string::npos) {
         load_prefab(model_path.c_str());
-    } else if (model_path.find("ABC") != std::string::npos 
+    } else if (model_path.find("ABC") != std::string::npos
         || model_path.find("abc") != std::string::npos
         || model_path.find("MIDI") != std::string::npos
         || model_path.find("midi") != std::string::npos) {

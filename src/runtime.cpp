@@ -1026,7 +1026,7 @@ int runtime::run_spark_tts_streaming(int model_id, std::string tts_text, std::st
                     actual_chunk_size = _sparktts->chunk_size;
                     _sparktts->resize_detokenizer_model(actual_chunk_size);
                 }
-                _tts_output_samples_buffer.insert(_tts_output_samples_buffer.end(), new_samples.begin() + (16000 * buffered_size / 50), new_samples.end());   
+                _tts_output_samples_buffer.insert(_tts_output_samples_buffer.end(), new_samples.begin() + (16000 * buffered_size / 50), new_samples.end());
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
         }
@@ -1446,11 +1446,11 @@ std::vector<int> runtime::get_loaded_model_ids() {
 
 std::map<int, std::map<std::string, std::string>> runtime::get_loaded_models_info() {
     std::map<int, std::map<std::string, std::string>> models_info;
-    
+
     for (const auto& pair : _models) {
         int model_id = pair.first;
         const auto& model = pair.second;
-        
+
         std::map<std::string, std::string> model_info;
         model_info["model_path"] = model->model_path;
         model_info["backend_name"] = model->backend_name;
@@ -1462,10 +1462,10 @@ std::map<int, std::map<std::string, std::string>> runtime::get_loaded_models_inf
         model_info["thinking_token"] = model->thinking_token;
         model_info["is_generating"] = model->is_generating ? "true" : "false";
         model_info["vocab_size"] = model->backend ? std::to_string(model->backend->get_num_vocab()) : "0";
-        
+
         models_info[model_id] = model_info;
     }
-    
+
     return models_info;
 }
 

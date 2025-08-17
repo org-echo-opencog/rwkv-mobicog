@@ -92,7 +92,7 @@ std::vector<uint8_t> processEscapes(const std::string &input, bool utf8_string =
                 case '\\': result.push_back('\\'); break;
                 case '\'': result.push_back('\''); break;
                 case '\"': result.push_back('\"'); break;
-                default: 
+                default:
                     result.push_back('\\');
                     result.push_back(static_cast<uint8_t>(c));
                     break;
@@ -112,7 +112,7 @@ std::vector<uint8_t> processEscapes(const std::string &input, bool utf8_string =
 
 struct VectorEqual {
     bool operator()(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b) const noexcept {
-        return a == b; 
+        return a == b;
     }
 };
 
@@ -134,7 +134,7 @@ private:
     OptimizedTrie* parent;
 
 public:
-    OptimizedTrie(OptimizedTrie* parent = nullptr, uint8_t ch = 0) 
+    OptimizedTrie(OptimizedTrie* parent = nullptr, uint8_t ch = 0)
         : parent(parent), ch(ch) {}
 
     OptimizedTrie* add(const std::vector<uint8_t>& key, size_t idx = 0, int val = -1) {
@@ -267,8 +267,8 @@ public:
             bool utf8_string = line[firstSpace+1] != 'b';
 
             std::vector<uint8_t> x = processEscapes(
-                processVocabFormat(line.substr(firstSpace + 1, lastSpace - firstSpace)), 
-                utf8_string, 
+                processVocabFormat(line.substr(firstSpace + 1, lastSpace - firstSpace)),
+                utf8_string,
                 utf8_byte_length
             );
 
@@ -326,4 +326,4 @@ public:
     }
 };
 
-#endif // TRIE_OPTIMIZED_HPP 
+#endif // TRIE_OPTIMIZED_HPP

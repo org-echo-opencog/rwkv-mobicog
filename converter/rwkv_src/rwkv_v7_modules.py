@@ -32,7 +32,7 @@ custom_wkv_src = """
 #include <torch/script.h>
 
 std::tuple<torch::Tensor, torch::Tensor> wkv7(
-    torch::Tensor r, torch::Tensor w, torch::Tensor k, 
+    torch::Tensor r, torch::Tensor w, torch::Tensor k,
     torch::Tensor v, torch::Tensor a, torch::Tensor b,
     torch::Tensor state) {
 
@@ -220,7 +220,7 @@ class Rwkv7SelfAttention(nn.Module):
         x = self.ln_x(x).view(batch_size, seq_length, self.hidden_size)
         x = self.mul_ln_x(x, self.ln_x_w)
         x = self.add_ln_x(x, self.ln_x_b)
-        
+
         x = x + ((receptance * key * self.r_k).view(seq_length, self.num_heads, self.head_size).sum(dim=-1, keepdim=True) * value.view(seq_length, self.num_heads, self.head_size)).view(seq_length, self.hidden_size)
         x = self.mul_attention(x, gate)
         x = self.output(x)

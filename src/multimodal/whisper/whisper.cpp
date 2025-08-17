@@ -1678,7 +1678,7 @@ static bool whisper_model_load(struct whisper_model_loader * loader, whisper_con
 
             model.adapter_proj_0_w = ggml_new_tensor_2d(ctx, wtype, n_adapter_hidden_dim, n_adapter_hidden_dim);
             model.adapter_proj_0_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_adapter_hidden_dim);
-            
+
             model.adapter_proj_2_w = ggml_new_tensor_2d(ctx, wtype, n_adapter_hidden_dim, n_proj_dim);
             model.adapter_proj_2_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_proj_dim);
 

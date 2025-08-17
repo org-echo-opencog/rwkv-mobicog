@@ -331,7 +331,7 @@ bool sparktts::get_global_and_semantic_tokens(
             std::ifstream cache(cache_file, std::ios::binary);
             if (cache) {
                 LOGI("[TTS] Loading cached speech tokens");
-                
+
                 size_t global_tokens_size;
                 cache.read(reinterpret_cast<char*>(&global_tokens_size), sizeof(size_t));
                 global_tokens.resize(global_tokens_size);

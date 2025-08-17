@@ -61,7 +61,7 @@ int NucleusSampler::sample(const float* logits, const size_t size, float tempera
     // random choice
     float random_value = cumsum * (_generator() - _generator.min()) /
                         (_generator.max() - _generator.min());
-    
+
     int ret = -1;
     cumsum = 0;
     for (int i = 0; i < len; i++) {

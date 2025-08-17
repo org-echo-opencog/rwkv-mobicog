@@ -51,7 +51,7 @@ std::string remove_bracket(const std::string& text) {
     return result;
 }
 
-std::string spell_out_number(const std::string& text, 
+std::string spell_out_number(const std::string& text,
                            const std::function<std::string(int)>& number_to_words) {
     std::string result;
     std::string current_number;
@@ -178,7 +178,7 @@ std::vector<std::string> split_paragraph(
                 next_pos = found + p.length();
             }
         }
-        
+
         if (next_pos > pos) {
             std::string utt = processed_text.substr(pos, next_pos - pos);
             if (!utt.empty()) {
@@ -191,7 +191,7 @@ std::vector<std::string> split_paragraph(
     // Merge utterances based on length constraints
     std::vector<std::string> final_utts;
     std::string cur_utt;
-    
+
     for (const auto& utt : utts) {
         if (calc_utt_length(cur_utt + utt) > token_max_n && calc_utt_length(cur_utt) > token_min_n) {
             final_utts.push_back(cur_utt);

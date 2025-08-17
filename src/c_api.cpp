@@ -678,47 +678,47 @@ int rwkvmobile_runtime_get_loaded_model_ids(rwkvmobile_runtime_t handle, int * m
     if (handle == nullptr || model_ids == nullptr || max_count <= 0) {
         return RWKV_ERROR_INVALID_PARAMETERS;
     }
-    
+
     auto rt = static_cast<class runtime *>(handle);
     auto loaded_ids = rt->get_loaded_model_ids();
-    
+
     int count = std::min(static_cast<int>(loaded_ids.size()), max_count);
     for (int i = 0; i < count; i++) {
         model_ids[i] = loaded_ids[i];
     }
-    
+
     return count;
 }
 
 struct loaded_models_list rwkvmobile_runtime_get_loaded_models_info(rwkvmobile_runtime_t handle) {
     struct loaded_models_list result = {nullptr, 0};
-    
+
     if (handle == nullptr) {
         return result;
     }
-    
+
     auto rt = static_cast<class runtime *>(handle);
     auto models_info = rt->get_loaded_models_info();
-    
+
     if (models_info.empty()) {
         return result;
     }
-    
+
     result.count = models_info.size();
     result.models = static_cast<struct model_info*>(malloc(sizeof(struct model_info) * result.count));
-    
+
     if (result.models == nullptr) {
         result.count = 0;
         return result;
     }
-    
+
     int index = 0;
     for (const auto& pair : models_info) {
         const auto& info = pair.second;
         struct model_info* model = &result.models[index];
-        
+
         model->model_id = pair.first;
-        
+
         // 分配并复制字符串
         auto allocate_string = [](const std::string& str) -> char* {
             char* result = static_cast<char*>(malloc(str.length() + 1));
@@ -727,7 +727,7 @@ struct loaded_models_list rwkvmobile_runtime_get_loaded_models_info(rwkvmobile_r
             }
             return result;
         };
-        
+
         model->model_path = allocate_string(info.at("model_path"));
         model->backend_name = allocate_string(info.at("backend_name"));
         model->tokenizer_path = allocate_string(info.at("tokenizer_path"));
@@ -738,10 +738,10 @@ struct loaded_models_list rwkvmobile_runtime_get_loaded_models_info(rwkvmobile_r
         model->thinking_token = allocate_string(info.at("thinking_token"));
         model->is_generating = (info.at("is_generating") == "true") ? 1 : 0;
         model->vocab_size = std::stoi(info.at("vocab_size"));
-        
+
         index++;
     }
-    
+
     return result;
 }
 
@@ -749,10 +749,10 @@ void rwkvmobile_runtime_free_loaded_models_list(struct loaded_models_list list) 
     if (list.models == nullptr || list.count == 0) {
         return;
     }
-    
+
     for (int i = 0; i < list.count; i++) {
         struct model_info* model = &list.models[i];
-        
+
         free(model->model_path);
         free(model->backend_name);
         free(model->tokenizer_path);
@@ -762,7 +762,7 @@ void rwkvmobile_runtime_free_loaded_models_list(struct loaded_models_list list) 
         free(model->eos_token);
         free(model->thinking_token);
     }
-    
+
     free(list.models);
 }
 

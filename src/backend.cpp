@@ -36,7 +36,7 @@ state_node* execution_provider::match_and_load_state(const std::vector<int> &ids
     LOGD("%s\n", debug_msg.c_str());
     return node;
 }
-    
+
 int execution_provider::register_state_checkpoint(state_node* &node, const std::vector<int> &ids, const float *logits) {
     node->next = new state_node;
     if (node->next == nullptr) {

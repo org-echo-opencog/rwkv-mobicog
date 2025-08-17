@@ -21,7 +21,7 @@ std::string replace_corner_mark(const std::string& text);
 
 std::string remove_bracket(const std::string& text);
 
-std::string spell_out_number(const std::string& text, 
+std::string spell_out_number(const std::string& text,
                            const std::function<std::string(int)>& number_to_words);
 
 std::string replace_blank(const std::string& text);

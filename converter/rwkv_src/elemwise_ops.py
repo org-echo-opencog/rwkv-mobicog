@@ -20,7 +20,7 @@ class Subtract(torch.nn.Module):
         else:
             out = x - y
         return out
-    
+
 class Neg(torch.nn.Module):
     # pylint:disable=arguments-differ
     @staticmethod
@@ -53,7 +53,7 @@ class SiLU(torch.nn.Module):
 
     def forward(self, x: torch.Tensor) -> Any:
         return self.mul(x, self.sigmoid(x))
-    
+
 class Exponential(torch.nn.Module):
     def __init__(self):
         super().__init__()
@@ -81,14 +81,14 @@ class Split(torch.nn.Module):
 
     def forward(self, x: torch.Tensor, *args, **kwargs) -> torch.Tensor:
         return torch.split(x, *args, **kwargs)
-    
+
 class ReLU(torch.nn.Module):
     def __init__(self):
         super().__init__()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return torch.relu(x)
-    
+
 class Pow(torch.nn.Module):
     def __init__(self):
         super().__init__()

@@ -113,7 +113,7 @@ int qnn_backend::load_model(std::string model_path) {
         return RWKV_ERROR_BACKEND | RWKV_ERROR_INVALID_PARAMETERS;
     }
 
-    bool is_context_cache = 
+    bool is_context_cache =
 #ifdef WIN32
         model_path.find(".dll") == std::string::npos;
 #else
@@ -153,7 +153,7 @@ int qnn_backend::load_model(std::string model_path) {
     }
 
     if (is_context_cache) {
-        std::string qnnSystemLibPath = 
+        std::string qnnSystemLibPath =
 #ifdef WIN32
             qnnBackendPath.substr(0, qnnBackendPath.find("QnnHtp.dll")) + "QnnSystem.dll";
 #else
@@ -645,7 +645,7 @@ int qnn_backend::load_model(std::string model_path) {
             graphConfigsInfo[1] = new GraphConfigInfo_t();
             graphConfigsInfo[1]->graphName = (char*)"model_fp16";
             graphConfigsInfo[1]->graphConfigs = (const QnnGraph_Config_t**)new QnnGraph_Config_t*[2];
-        
+
             static QnnHtpGraph_CustomConfig_t customConfig;
             customConfig.option = QNN_HTP_GRAPH_CONFIG_OPTION_PRECISION;
             customConfig.precision = QNN_PRECISION_FLOAT16;
@@ -1353,7 +1353,7 @@ int qnn_backend::post_graph_execute(float *& logits) {
             LOGE("Unsupported external lmhead filetype: %s", external_lmhead_filetype.c_str());
             return RWKV_ERROR_IO;
         }
-    } else 
+    } else
 #endif
     {
         if (RWKV_SUCCESS != copy_qnn_tensor_to_float(logitsOutputTensor, logits_buffer.data(), vocab_size)) {

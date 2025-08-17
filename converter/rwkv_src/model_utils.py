@@ -29,7 +29,7 @@ def get_dummy_state(batch_size, model_cfg, device, merged_states=False):
         state_0 = (1, batch_size, embed_dim)
         state_1 = (batch_size, num_heads, head_size, head_size)
         state_2 = (1, batch_size, embed_dim)
-    
+
         state = []
         for _ in range(0, num_layers):
             state += [_cache(state_0, model_cfg.fp16), _cache(state_1, model_cfg.fp16), _cache(state_2, model_cfg.fp16)]

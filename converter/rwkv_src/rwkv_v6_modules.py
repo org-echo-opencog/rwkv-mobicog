@@ -103,7 +103,7 @@ class Rwkv6SelfAttention(nn.Module):
         self.exp1                   = op.Exponential()
         self.neg                    = op.Neg()
         self.add_attention          = op.Add()
-    
+
     def forward(self, x, state1, state2):
         last_x = x
         x = self.ln_1(x)

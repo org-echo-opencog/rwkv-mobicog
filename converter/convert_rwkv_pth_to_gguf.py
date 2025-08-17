@@ -374,7 +374,7 @@ class Model:
 
     def set_vocab(self):
         self._set_vocab_rwkv_world()
-    
+
     def set_gguf_parameters(self):
         return
 
@@ -585,7 +585,7 @@ class Rwkv7Model(Model):
             # some models have dummy v0/v1/v2 on first layer while others don't
             # ignore them all since they are not used
             return
-        
+
         if "pre_norm" in name and "layers.0" not in name:
             return
 

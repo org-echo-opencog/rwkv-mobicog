@@ -29,7 +29,7 @@ class RWKVModelPacker:
             size = len(data)
             self.binary_data.append(data)
             self.files.append((file_name, size, 0))  # offset稍后计算
-    
+
     def add_file_from_bytes(self, data: bytes, file_name: str):
         size = len(data)
         self.binary_data.append(data)
@@ -39,7 +39,7 @@ class RWKVModelPacker:
         """计算所有文件的偏移量"""
         # 文件头大小
         offset = len(self.MAGIC_HEADER)
-        
+
         # 配置项大小
         config_json = json.dumps(self.config, ensure_ascii=False).encode('utf-8')
         offset += 4 + len(config_json)  # 4字节存储配置项长度
@@ -96,7 +96,7 @@ class RWKVModelPacker:
                 f.write(b'\0' * padding_size)
                 # 写入文件内容
                 f.write(data)
-        
+
         print(f"rmpack文件已打包到: {output_path}")
         print(f"总大小: {os.path.getsize(output_path)} 字节")
         print(f"包含文件数: {len(self.files)}")

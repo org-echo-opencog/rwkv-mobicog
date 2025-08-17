@@ -51,7 +51,7 @@ public:
 private:
     static const char* MAGIC_HEADER;
     static const size_t MAGIC_HEADER_SIZE;
-    
+
     std::string file_path_;
     int fd_;
     std::ifstream* file_;

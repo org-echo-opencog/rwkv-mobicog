@@ -1364,7 +1364,7 @@ static void bilinear_resize(const clip_image_u8& src, clip_image_u8& dst, int ta
         bounds_horiz[xx * 2 + 0] = xmin;
         bounds_horiz[xx * 2 + 1] = xmax;
     }
-    
+
 
     std::vector<int32_t> bounds_vert;
     std::vector<double> kk_vert;

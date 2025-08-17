@@ -68,7 +68,7 @@ class RWKV_Block(nn.Module):
                 x, state[3*self.layer_offset], state[3*self.layer_offset+1] = self.att(x, state[3*self.layer_offset], state[3*self.layer_offset+1])
                 x, state[3*self.layer_offset+2] = self.ffn(x, state[3*self.layer_offset+2])
                 return x, state
-                
+
 
 class RWKV_RNN(torch.nn.Module):
     def __init__(self, args, chunks=1, chunk_idx=0):
@@ -134,7 +134,7 @@ class RWKV_RNN(torch.nn.Module):
 
         if self.gpu:
             self.to(self.device)
-        
+
         if self.args.fp16:
             self.half()
 
@@ -151,7 +151,7 @@ class RWKV_RNN(torch.nn.Module):
                 batch_size, seq_length, _ = x.size()
             except:
                 batch_size, seq_length = 1, 1
-            
+
             if self.args.version == 7:
                 v_first = torch.empty_like(x)
 

@@ -94,7 +94,7 @@ int soc_detect::detect_platform() {
 }
 
 platform_type soc_detect::get_platform_type() {
-    return m_platform_type; 
+    return m_platform_type;
 }
 
 const char * soc_detect::get_platform_name() {
