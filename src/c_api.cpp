@@ -769,5 +769,13 @@ void rwkvmobile_runtime_free_loaded_models_list(struct loaded_models_list list) 
     free(list.models);
 }
 
+const char * rwkvmobile_runtime_get_model_path_by_id(rwkvmobile_runtime_t runtime, int model_id) {
+    if (runtime == nullptr) {
+        return nullptr;
+    }
+    auto rt = static_cast<class runtime *>(runtime);
+    return rt->get_model_path_by_id(model_id).c_str();
+}
+
 } // extern "C"
 } // namespace rwkvmobile

@@ -1469,5 +1469,13 @@ std::map<int, std::map<std::string, std::string>> runtime::get_loaded_models_inf
     return models_info;
 }
 
+std::string runtime::get_model_path_by_id(int model_id) {
+    if (_models.find(model_id) == _models.end()) {
+        return "";
+    }
+    auto &model = _models.at(model_id);
+    return model->model_path;
+}
+
 } // namespace rwkvmobile
 

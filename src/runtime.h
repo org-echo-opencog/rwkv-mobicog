@@ -285,6 +285,7 @@ public:
     // get loaded models info
     std::vector<int> get_loaded_model_ids();
     std::map<int, std::map<std::string, std::string>> get_loaded_models_info();
+    std::string get_model_path_by_id(int model_id);
 
     inline void set_cache_dir(std::string cache_dir) { _cache_dir = cache_dir; }
 

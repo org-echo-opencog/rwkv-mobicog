@@ -806,6 +806,18 @@ late final _rwkvmobile_runtime_free_loaded_models_listPtr = _lookup<
     ffi.NativeFunction<ffi.Void Function(loaded_models_list )>>('rwkvmobile_runtime_free_loaded_models_list');
 late final _rwkvmobile_runtime_free_loaded_models_list = _rwkvmobile_runtime_free_loaded_models_listPtr.asFunction<void Function(loaded_models_list )>();
 
+ffi.Pointer<ffi.Char> rwkvmobile_runtime_get_model_path_by_id(rwkvmobile_runtime_t runtime,
+int model_id,
+) {
+  return _rwkvmobile_runtime_get_model_path_by_id(runtime,
+model_id,
+);
+}
+
+late final _rwkvmobile_runtime_get_model_path_by_idPtr = _lookup<
+    ffi.NativeFunction<ffi.Pointer<ffi.Char> Function(rwkvmobile_runtime_t , ffi.Int )>>('rwkvmobile_runtime_get_model_path_by_id');
+late final _rwkvmobile_runtime_get_model_path_by_id = _rwkvmobile_runtime_get_model_path_by_idPtr.asFunction<ffi.Pointer<ffi.Char> Function(rwkvmobile_runtime_t , int )>();
+
 }
 
 final class sampler_params extends ffi.Struct{

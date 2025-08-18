@@ -183,12 +183,14 @@ void rwkvmobile_set_loglevel(int loglevel);
 
 void rwkvmobile_set_cache_dir(rwkvmobile_runtime_t runtime, const char * cache_dir);
 
-// 获取已加载模型列表
+// get loaded models info
 int rwkvmobile_runtime_get_loaded_model_ids(rwkvmobile_runtime_t runtime, int * model_ids, int max_count);
 
 struct loaded_models_list rwkvmobile_runtime_get_loaded_models_info(rwkvmobile_runtime_t runtime);
 
 void rwkvmobile_runtime_free_loaded_models_list(struct loaded_models_list list);
+
+const char * rwkvmobile_runtime_get_model_path_by_id(rwkvmobile_runtime_t runtime, int model_id);
 
 #ifdef __cplusplus
 }
