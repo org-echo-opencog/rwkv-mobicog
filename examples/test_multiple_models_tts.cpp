@@ -10,6 +10,14 @@
 
 #define ENSURE_SUCCESS_OR_LOG_EXIT(x, msg) if (x != rwkvmobile::RWKV_SUCCESS) { std::cout << msg << std::endl; return 1; }
 
+char msg0[] = "What's the weather like today?";
+
+std::string response;
+void callback(const char *msg, const int, const char *next) {
+    // std::cout << "Callback: " << msg << std::endl;
+    response = std::string(msg);
+};
+
 void test_get_loaded_models_info(rwkvmobile_runtime_t runtime) {
     std::cout << "\n=== Testing Get Loaded Models Info ===" << std::endl;
 
@@ -51,16 +59,22 @@ void test_get_loaded_models_info(rwkvmobile_runtime_t runtime) {
     rwkvmobile_runtime_free_loaded_models_list(models_list);
 }
 
+void custom_sleep(int seconds) {
+#if _WIN32
+    Sleep(seconds * 1000);
+#else
+    sleep(seconds);
+#endif
+}
+
 int main(int argc, char **argv) {
     // set stdout to be unbuffered
     setvbuf(stdout, NULL, _IONBF, 0);
 
-    if (argc < 4) {
-        std::cerr << "Usage: " << argv[0] << " <vocab_file> <model_file> <backend> [second_model_file]" << std::endl;
+    if (argc != 8) {
+        std::cerr << "Usage: " << argv[0] << " <vocab_file> <model_file> <backend> <tts_vocab_file> <tts_rwkv_model_file> <tts_backend> <input_audio>" << std::endl;
         return 1;
     }
-
-    std::cout << "=== RWKV Mobile Loaded Models API Test ===" << std::endl;
 
     // Create runtime
     rwkvmobile_runtime_t runtime = rwkvmobile_runtime_init();
@@ -71,29 +85,37 @@ int main(int argc, char **argv) {
 
     std::cout << "Runtime initialized successfully" << std::endl;
 
-    // Test before loading model (should return empty list)
-    std::cout << "\n--- Testing Before Model Load ---" << std::endl;
-    test_get_loaded_models_info(runtime);
-
     // Load first model
-    std::cout << "Loading model..." << std::endl;
-    int ret = rwkvmobile_runtime_load_model(runtime, argv[2], argv[3], argv[1]);
-    ENSURE_SUCCESS_OR_LOG_EXIT(ret, "Failed to load model");
+    std::cout << "Loading RWKV LLM model..." << std::endl;
+    int model_id0 = rwkvmobile_runtime_load_model(runtime, argv[2], argv[3], argv[1]);
+    ENSURE_SUCCESS_OR_LOG_EXIT(model_id0 < 0 ? model_id0 : rwkvmobile::RWKV_SUCCESS, "Failed to load model");
 
     std::cout << "Model loaded successfully" << std::endl;
 
-    // Test getting loaded models list
-    test_get_loaded_models_info(runtime);
+    std::cout << "Loading tts models..." << std::endl;
+    int model_id1 = rwkvmobile_runtime_load_model(runtime, argv[5], argv[6], argv[4]);
+    ENSURE_SUCCESS_OR_LOG_EXIT(model_id1 < 0 ? model_id1 : rwkvmobile::RWKV_SUCCESS, "Failed to load model");
+    rwkvmobile_runtime_sparktts_load_models(runtime, "wav2vec2-large-xlsr-53.mnn", "BiCodecTokenize.mnn", "BiCodecDetokenize.mnn");
+    std::cout << "TTS models loaded successfully" << std::endl;
 
-    // Try loading second model if available
-    // This is just an example, modify model path as needed in actual use
-    if (argc > 4) {
-        std::cout << "Loading second model..." << std::endl;
-        int model_id = rwkvmobile_runtime_load_model(runtime, argv[4], argv[3], argv[1]);
-        ENSURE_SUCCESS_OR_LOG_EXIT(model_id < 0 ? model_id : rwkvmobile::RWKV_SUCCESS, "Failed to load model");
-        std::cout << "Second model loaded successfully" << std::endl;
-        test_get_loaded_models_info(runtime);
+    std::cout << "Chatting with model 0..." << std::endl;
+    char *input_list0[] = {msg0, nullptr, nullptr};
+    rwkvmobile_runtime_eval_chat_with_history_async(runtime, model_id0, (const char **)input_list0, 1, 200, callback, false);
+    while (rwkvmobile_runtime_is_generating(runtime, model_id0)) {
+        std::cout << ".";
+        custom_sleep(1);
     }
+    std::cout << std::endl;
+    std::cout << "Response: " << response << std::endl;
+
+    std::cout << "Running TTS..." << std::endl;
+    rwkvmobile_runtime_run_spark_tts_streaming_async(runtime, model_id1, response.c_str(), "", argv[7], "output.wav");
+    while (rwkvmobile_runtime_is_generating(runtime, model_id1)) {
+        std::cout << ".";
+        custom_sleep(1);
+    }
+    std::cout << std::endl;
+    std::cout << "TTS completed, output file: output.wav" << std::endl;
 
     // Release runtime
     rwkvmobile_runtime_release(runtime);

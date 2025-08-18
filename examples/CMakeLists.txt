@@ -58,7 +58,13 @@ target_link_libraries(simple_benchmark PUBLIC rwkv_mobile_internal)
 if (ENABLE_TTS)
     add_executable(test_tts test_tts.cpp)
     target_link_libraries(test_tts PUBLIC rwkv_mobile_internal)
+
+    add_executable(test_multiple_models_tts test_multiple_models_tts.cpp ../src/c_api.cpp)
+    target_link_libraries(test_multiple_models_tts PUBLIC rwkv_mobile_internal)
 endif()
 
 add_executable(test_state_loading test_state_loading.cpp)
 target_link_libraries(test_state_loading PUBLIC rwkv_mobile_internal)
+
+add_executable(test_multiple_models test_multiple_models.cpp ../src/c_api.cpp)
+target_link_libraries(test_multiple_models PUBLIC rwkv_mobile_internal)

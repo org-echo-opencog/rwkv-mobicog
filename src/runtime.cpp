@@ -192,6 +192,9 @@ int runtime::load_model(std::string model_path, std::string backend_name, std::s
     // 5. Store the instance and return its ID
     int model_id = _next_model_id++;
     _models[model_id] = std::move(model_instance);
+    _models[model_id]->model_path = model_path;
+    _models[model_id]->backend_name = backend_name;
+    _models[model_id]->tokenizer_path = tokenizer_path;
 
     return model_id;
 }
@@ -418,8 +421,6 @@ int runtime::eval_logits_with_embeddings(int model_id, const float *embeddings, 
     return ret;
 }
 
-// This function needs to be associated with a model instance
-// to get chat templates
 std::string runtime::apply_chat_template(int model_id, std::vector<std::string> inputs, bool enable_reasoning) {
     if (_models.find(model_id) == _models.end()) {
         return "";
@@ -1056,7 +1057,6 @@ int runtime::run_spark_tts_streaming(int model_id, std::string tts_text, std::st
     LOGI("[TTS] Output audio length: %lf s", _tts_output_samples_buffer.size() / 16000.0);
     LOGI("[TTS] RTF (%s): %lf", read_from_cache ? "prompt audio tokens cache hit" : "prompt audio tokens cache miss", total_duration / 1e3f * 16000.0 / _tts_output_samples_buffer.size());
     LOGI("[TTS] TTFA (%s): %lf ms", read_from_cache ? "prompt audio tokens cache hit" : "prompt audio tokens cache miss", ttfa);
-    LOGI("\n\n");
 
     set_is_generating(model_id, false);
     return RWKV_SUCCESS;

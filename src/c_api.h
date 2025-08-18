@@ -66,77 +66,77 @@ int rwkvmobile_runtime_load_model_with_extra(rwkvmobile_runtime_t runtime, const
 
 int rwkvmobile_runtime_release_model(rwkvmobile_runtime_t runtime, int model_id);
 
-int rwkvmobile_runtime_eval_logits(rwkvmobile_runtime_t runtime, const int *ids, int ids_len, float * logits, int logits_len);
+int rwkvmobile_runtime_eval_logits(rwkvmobile_runtime_t runtime, int model_id, const int *ids, int ids_len, float * logits, int logits_len);
 
-int rwkvmobile_runtime_eval_chat_with_history_async(rwkvmobile_runtime_t handle, const char ** inputs, const int num_inputs, const int max_tokens, void (*callback)(const char *, const int, const char *), int enable_reasoning);
+int rwkvmobile_runtime_eval_chat_with_history_async(rwkvmobile_runtime_t handle, int model_id, const char ** inputs, const int num_inputs, const int max_tokens, void (*callback)(const char *, const int, const char *), int enable_reasoning);
 
-int rwkvmobile_runtime_stop_generation(rwkvmobile_runtime_t runtime);
+int rwkvmobile_runtime_stop_generation(rwkvmobile_runtime_t runtime, int model_id);
 
-int rwkvmobile_runtime_is_generating(rwkvmobile_runtime_t runtime);
+int rwkvmobile_runtime_is_generating(rwkvmobile_runtime_t runtime, int model_id);
 
-int rwkvmobile_runtime_set_prompt(rwkvmobile_runtime_t runtime, const char * prompt);
+int rwkvmobile_runtime_set_prompt(rwkvmobile_runtime_t runtime, int model_id, const char * prompt);
 
-int rwkvmobile_runtime_get_prompt(rwkvmobile_runtime_t runtime, char * prompt, const int buf_len);
+int rwkvmobile_runtime_get_prompt(rwkvmobile_runtime_t runtime, int model_id, char * prompt, const int buf_len);
 
-int rwkvmobile_runtime_gen_completion_async(rwkvmobile_runtime_t runtime, const char * prompt, const int max_tokens, const int stop_code, void (*callback)(const char *, const int, const char *));
+int rwkvmobile_runtime_gen_completion_async(rwkvmobile_runtime_t runtime, int model_id, const char * prompt, const int max_tokens, const int stop_code, void (*callback)(const char *, const int, const char *));
 
-int rwkvmobile_runtime_gen_completion(rwkvmobile_runtime_t runtime, const char * prompt, const int max_tokens, const int stop_code, void (*callback)(const char *, const int, const char *));
+int rwkvmobile_runtime_gen_completion(rwkvmobile_runtime_t runtime, int model_id, const char * prompt, const int max_tokens, const int stop_code, void (*callback)(const char *, const int, const char *));
 
-int rwkvmobile_runtime_clear_state(rwkvmobile_runtime_t runtime);
+int rwkvmobile_runtime_clear_state(rwkvmobile_runtime_t runtime, int model_id);
 
-int rwkvmobile_runtime_load_initial_state(rwkvmobile_runtime_t runtime, const char * state_path);
+int rwkvmobile_runtime_load_initial_state(rwkvmobile_runtime_t runtime, int model_id, const char * state_path);
 
-void rwkvmobile_runtime_clear_initial_state(rwkvmobile_runtime_t runtime);
+void rwkvmobile_runtime_clear_initial_state(rwkvmobile_runtime_t runtime, int model_id);
 
-struct sampler_params rwkvmobile_runtime_get_sampler_params(rwkvmobile_runtime_t runtime);
+struct sampler_params rwkvmobile_runtime_get_sampler_params(rwkvmobile_runtime_t runtime, int model_id);
 
-void rwkvmobile_runtime_set_sampler_params(rwkvmobile_runtime_t runtime, struct sampler_params params);
+void rwkvmobile_runtime_set_sampler_params(rwkvmobile_runtime_t runtime, int model_id, struct sampler_params params);
 
-struct penalty_params rwkvmobile_runtime_get_penalty_params(rwkvmobile_runtime_t runtime);
+struct penalty_params rwkvmobile_runtime_get_penalty_params(rwkvmobile_runtime_t runtime, int model_id);
 
-void rwkvmobile_runtime_set_penalty_params(rwkvmobile_runtime_t runtime, struct penalty_params params);
+void rwkvmobile_runtime_set_penalty_params(rwkvmobile_runtime_t runtime, int model_id, struct penalty_params params);
 
 void rwkvmobile_runtime_add_adsp_library_path(const char * path);
 
-void rwkvmobile_runtime_set_qnn_library_path(rwkvmobile_runtime_t runtime, const char * path);
+void rwkvmobile_runtime_set_qnn_library_path(rwkvmobile_runtime_t runtime, int model_id, const char * path);
 
-double rwkvmobile_runtime_get_avg_decode_speed(rwkvmobile_runtime_t runtime);
+double rwkvmobile_runtime_get_avg_decode_speed(rwkvmobile_runtime_t runtime, int model_id);
 
-double rwkvmobile_runtime_get_avg_prefill_speed(rwkvmobile_runtime_t runtime);
+double rwkvmobile_runtime_get_avg_prefill_speed(rwkvmobile_runtime_t runtime, int model_id);
 
 // Vision
-int rwkvmobile_runtime_load_vision_encoder(rwkvmobile_runtime_t runtime, const char * encoder_path);
+int rwkvmobile_runtime_load_vision_encoder(rwkvmobile_runtime_t runtime, int model_id, const char * encoder_path);
 
-int rwkvmobile_runtime_load_vision_encoder_and_adapter(rwkvmobile_runtime_t runtime, const char * encoder_path, const char * adapter_path);
+int rwkvmobile_runtime_load_vision_encoder_and_adapter(rwkvmobile_runtime_t runtime, int model_id, const char * encoder_path, const char * adapter_path);
 
-int rwkvmobile_runtime_release_vision_encoder(rwkvmobile_runtime_t runtime);
+int rwkvmobile_runtime_release_vision_encoder(rwkvmobile_runtime_t runtime, int model_id);
 
-int rwkvmobile_runtime_set_image_prompt(rwkvmobile_runtime_t runtime, const char * image_path);
+int rwkvmobile_runtime_set_image_prompt(rwkvmobile_runtime_t runtime, int model_id, const char * image_path);
 
 // Whisper
-int rwkvmobile_runtime_load_whisper_encoder(rwkvmobile_runtime_t runtime, const char * encoder_path);
+int rwkvmobile_runtime_load_whisper_encoder(rwkvmobile_runtime_t runtime, int model_id, const char * encoder_path);
 
-int rwkvmobile_runtime_release_whisper_encoder(rwkvmobile_runtime_t runtime);
+int rwkvmobile_runtime_release_whisper_encoder(rwkvmobile_runtime_t runtime, int model_id);
 
-int rwkvmobile_runtime_set_audio_prompt(rwkvmobile_runtime_t runtime, const char * audio_path);
+int rwkvmobile_runtime_set_audio_prompt(rwkvmobile_runtime_t runtime, int model_id, const char * audio_path);
 
-int rwkvmobile_runtime_set_token_banned(rwkvmobile_runtime_t runtime, const int * token_banned, int token_banned_len);
+int rwkvmobile_runtime_set_token_banned(rwkvmobile_runtime_t runtime, int model_id, const int * token_banned, int token_banned_len);
 
-int rwkvmobile_runtime_set_eos_token(rwkvmobile_runtime_t runtime, const char * eos_token);
+int rwkvmobile_runtime_set_eos_token(rwkvmobile_runtime_t runtime, int model_id, const char * eos_token);
 
-int rwkvmobile_runtime_set_bos_token(rwkvmobile_runtime_t runtime, const char * bos_token);
+int rwkvmobile_runtime_set_bos_token(rwkvmobile_runtime_t runtime, int model_id, const char * bos_token);
 
-int rwkvmobile_runtime_set_user_role(rwkvmobile_runtime_t runtime, const char * user_role);
+int rwkvmobile_runtime_set_user_role(rwkvmobile_runtime_t runtime, int model_id, const char * user_role);
 
-int rwkvmobile_runtime_set_response_role(rwkvmobile_runtime_t runtime, const char * response_role);
+int rwkvmobile_runtime_set_response_role(rwkvmobile_runtime_t runtime, int model_id, const char * response_role);
 
-int rwkvmobile_runtime_set_thinking_token(rwkvmobile_runtime_t runtime, const char * thinking_token);
+int rwkvmobile_runtime_set_thinking_token(rwkvmobile_runtime_t runtime, int model_id, const char * thinking_token);
 
-struct response_buffer rwkvmobile_runtime_get_response_buffer_content(rwkvmobile_runtime_t runtime);
+struct response_buffer rwkvmobile_runtime_get_response_buffer_content(rwkvmobile_runtime_t runtime, int model_id);
 
 void rwkvmobile_runtime_free_response_buffer(struct response_buffer buffer);
 
-struct token_ids rwkvmobile_runtime_get_response_buffer_ids(rwkvmobile_runtime_t runtime);
+struct token_ids rwkvmobile_runtime_get_response_buffer_ids(rwkvmobile_runtime_t runtime, int model_id);
 
 void rwkvmobile_runtime_free_token_ids(struct token_ids ids);
 
@@ -145,13 +145,13 @@ int rwkvmobile_runtime_sparktts_load_models(rwkvmobile_runtime_t runtime, const 
 
 int rwkvmobile_runtime_sparktts_release_models(rwkvmobile_runtime_t runtime);
 
-int rwkvmobile_runtime_run_spark_tts_streaming_async(rwkvmobile_runtime_t runtime, const char * tts_text, const char * prompt_audio_text, const char * prompt_audio_path, const char * output_wav_path);
+int rwkvmobile_runtime_run_spark_tts_streaming_async(rwkvmobile_runtime_t runtime, int model_id, const char * tts_text, const char * prompt_audio_text, const char * prompt_audio_path, const char * output_wav_path);
 
 struct tts_streaming_buffer rwkvmobile_runtime_get_tts_streaming_buffer(rwkvmobile_runtime_t runtime);
 
 int rwkvmobile_runtime_tts_register_text_normalizer(rwkvmobile_runtime_t runtime, const char * path);
 
-float rwkvmobile_runtime_get_prefill_progress(rwkvmobile_runtime_t runtime);
+float rwkvmobile_runtime_get_prefill_progress(rwkvmobile_runtime_t runtime, int model_id);
 
 int rwkvmobile_load_embedding_model(rwkvmobile_runtime_t runtime, const char *model_path);
 

@@ -35,26 +35,27 @@ int main(int argc, char **argv) {
     }
 
     rwkvmobile_runtime_t runtime = rwkvmobile_runtime_init();
-    rwkvmobile_runtime_load_model(runtime, argv[1], argv[5], argv[3]);
-    rwkvmobile_runtime_load_whisper_encoder(runtime, argv[2]);
-    rwkvmobile_runtime_set_eos_token(runtime, "\x17");
-    rwkvmobile_runtime_set_bos_token(runtime, "\x16");
-    rwkvmobile_runtime_set_token_banned(runtime, {0}, 1);
-    rwkvmobile_runtime_set_user_role(runtime, "");
+    int model_id = rwkvmobile_runtime_load_model(runtime, argv[1], argv[5], argv[3]);
+    ENSURE_SUCCESS_OR_LOG_EXIT(model_id < 0 ? model_id : rwkvmobile::RWKV_SUCCESS, "Failed to load model");
+    rwkvmobile_runtime_load_whisper_encoder(runtime, model_id, argv[2]);
+    rwkvmobile_runtime_set_eos_token(runtime, model_id, "\x17");
+    rwkvmobile_runtime_set_bos_token(runtime, model_id, "\x16");
+    rwkvmobile_runtime_set_token_banned(runtime, model_id, {0}, 1);
+    rwkvmobile_runtime_set_user_role(runtime, model_id, "");
 
-    rwkvmobile_runtime_set_audio_prompt(runtime, argv[4]);
+    rwkvmobile_runtime_set_audio_prompt(runtime, model_id, argv[4]);
 
-    rwkvmobile_runtime_eval_chat_with_history_async(runtime, prompt_list, 1, 100, nullptr, 0);
+    rwkvmobile_runtime_eval_chat_with_history_async(runtime, model_id, prompt_list, 1, 100, nullptr, 0);
 
-    while (rwkvmobile_runtime_is_generating(runtime)) {
+    while (rwkvmobile_runtime_is_generating(runtime, model_id)) {
         custom_sleep(1);
     }
 
-    struct response_buffer buffer = rwkvmobile_runtime_get_response_buffer_content(runtime);
+    struct response_buffer buffer = rwkvmobile_runtime_get_response_buffer_content(runtime, model_id);
     std::cout << buffer.content << std::endl;
     rwkvmobile_runtime_free_response_buffer(buffer);
 
-    rwkvmobile_runtime_release_whisper_encoder(runtime);
+    rwkvmobile_runtime_release_whisper_encoder(runtime, model_id);
 
     rwkvmobile_runtime_release(runtime);
     return 0;

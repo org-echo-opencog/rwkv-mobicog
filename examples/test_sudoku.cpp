@@ -28,10 +28,11 @@ int main(int argc, char **argv) {
     }
 
     rwkvmobile_runtime_t runtime = rwkvmobile_runtime_init();
-    rwkvmobile_runtime_load_model(runtime, argv[2], argv[3], argv[1]);
+    int model_id = rwkvmobile_runtime_load_model(runtime, argv[2], argv[3], argv[1]);
+    ENSURE_SUCCESS_OR_LOG_EXIT(model_id < 0 ? model_id : rwkvmobile::RWKV_SUCCESS, "Failed to load model");
     std::cout << "Loaded model" << std::endl;
-    rwkvmobile_runtime_set_penalty_params(runtime, {0, 0, 0});
-    rwkvmobile_runtime_set_sampler_params(runtime, {1.0, 1, 1.0});
+    rwkvmobile_runtime_set_penalty_params(runtime, model_id, {0, 0, 0});
+    rwkvmobile_runtime_set_sampler_params(runtime, model_id, {1.0, 1, 1.0});
 
     std::string prompt = "<input>\n"
                         "8 0 0 0 0 0 0 0 0 \n"
@@ -48,6 +49,6 @@ int main(int argc, char **argv) {
     std::cout << std::endl;
 
     std::cout << "Generating completion" << std::endl;
-    rwkvmobile_runtime_gen_completion(runtime, prompt.c_str(), 5000000, 105, callback);
+    rwkvmobile_runtime_gen_completion(runtime, model_id, prompt.c_str(), 5000000, 105, callback);
     return 0;
 }

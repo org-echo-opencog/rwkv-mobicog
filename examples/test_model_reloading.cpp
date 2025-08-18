@@ -52,11 +52,11 @@ int main(int argc, char **argv) {
     rwkvmobile_runtime_t runtime = rwkvmobile_runtime_init();
     int model_id = rwkvmobile_runtime_load_model(runtime, model1, backend, vocab_file);
     ENSURE_SUCCESS_OR_LOG_EXIT(model_id < 0 ? model_id : rwkvmobile::RWKV_SUCCESS, "Failed to load model");
-    rwkvmobile_runtime_set_penalty_params(runtime, {0, 0, 0});
-    rwkvmobile_runtime_set_sampler_params(runtime, {1.0, 1, 1.0});
+    rwkvmobile_runtime_set_penalty_params(runtime, model_id, {0, 0, 0});
+    rwkvmobile_runtime_set_sampler_params(runtime, model_id, {1.0, 1, 1.0});
 
-    rwkvmobile_runtime_eval_chat_with_history_async(runtime, (const char **)input_list, 3, 50, callback, 0);
-    while (rwkvmobile_runtime_is_generating(runtime)) {
+    rwkvmobile_runtime_eval_chat_with_history_async(runtime, model_id, (const char **)input_list, 3, 50, callback, 0);
+    while (rwkvmobile_runtime_is_generating(runtime, model_id)) {
         std::cout << "Waiting for generation to finish..." << std::endl;
         custom_sleep(1);
     }
@@ -66,11 +66,11 @@ int main(int argc, char **argv) {
 
     model_id = rwkvmobile_runtime_load_model(runtime, model2, backend, vocab_file);
     ENSURE_SUCCESS_OR_LOG_EXIT(model_id < 0 ? model_id : rwkvmobile::RWKV_SUCCESS, "Failed to load model");
-    rwkvmobile_runtime_set_penalty_params(runtime, {0, 0, 0});
-    rwkvmobile_runtime_set_sampler_params(runtime, {1.0, 1, 1.0});
+    rwkvmobile_runtime_set_penalty_params(runtime, model_id, {0, 0, 0});
+    rwkvmobile_runtime_set_sampler_params(runtime, model_id, {1.0, 1, 1.0});
 
-    rwkvmobile_runtime_eval_chat_with_history_async(runtime, (const char **)input_list, 3, 50, callback, 0);
-    while (rwkvmobile_runtime_is_generating(runtime)) {
+    rwkvmobile_runtime_eval_chat_with_history_async(runtime, model_id, (const char **)input_list, 3, 50, callback, 0);
+    while (rwkvmobile_runtime_is_generating(runtime, model_id)) {
         std::cout << "Waiting for generation to finish..." << std::endl;
         custom_sleep(1);
     }
@@ -80,11 +80,11 @@ int main(int argc, char **argv) {
 
     model_id = rwkvmobile_runtime_load_model(runtime, model1, backend, vocab_file);
     ENSURE_SUCCESS_OR_LOG_EXIT(model_id < 0 ? model_id : rwkvmobile::RWKV_SUCCESS, "Failed to load model");
-    rwkvmobile_runtime_set_penalty_params(runtime, {0, 0, 0});
-    rwkvmobile_runtime_set_sampler_params(runtime, {1.0, 1, 1.0});
+    rwkvmobile_runtime_set_penalty_params(runtime, model_id, {0, 0, 0});
+    rwkvmobile_runtime_set_sampler_params(runtime, model_id, {1.0, 1, 1.0});
 
-    rwkvmobile_runtime_eval_chat_with_history_async(runtime, (const char **)input_list, 3, 50, callback, 0);
-    while (rwkvmobile_runtime_is_generating(runtime)) {
+    rwkvmobile_runtime_eval_chat_with_history_async(runtime, model_id, (const char **)input_list, 3, 50, callback, 0);
+    while (rwkvmobile_runtime_is_generating(runtime, model_id)) {
         std::cout << "Waiting for generation to finish..." << std::endl;
         custom_sleep(1);
     }
@@ -94,11 +94,11 @@ int main(int argc, char **argv) {
 
     model_id = rwkvmobile_runtime_load_model(runtime, model2, backend, vocab_file);
     ENSURE_SUCCESS_OR_LOG_EXIT(model_id < 0 ? model_id : rwkvmobile::RWKV_SUCCESS, "Failed to load model");
-    rwkvmobile_runtime_set_penalty_params(runtime, {0, 0, 0});
-    rwkvmobile_runtime_set_sampler_params(runtime, {1.0, 1, 1.0});
+    rwkvmobile_runtime_set_penalty_params(runtime, model_id, {0, 0, 0});
+    rwkvmobile_runtime_set_sampler_params(runtime, model_id, {1.0, 1, 1.0});
 
-    rwkvmobile_runtime_eval_chat_with_history_async(runtime, (const char **)input_list, 3, 50, callback, 0);
-    while (rwkvmobile_runtime_is_generating(runtime)) {
+    rwkvmobile_runtime_eval_chat_with_history_async(runtime, model_id, (const char **)input_list, 3, 50, callback, 0);
+    while (rwkvmobile_runtime_is_generating(runtime, model_id)) {
         std::cout << "Waiting for generation to finish..." << std::endl;
         custom_sleep(1);
     }

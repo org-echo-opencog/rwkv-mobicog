@@ -46,24 +46,25 @@ int rwkvmobile_runtime_release_model(rwkvmobile_runtime_t handle, int model_id) 
     return rt->release_model(model_id);
 }
 
-int rwkvmobile_runtime_eval_logits(rwkvmobile_runtime_t handle, const int * ids, int ids_len, float * logits, int logits_len) {
+int rwkvmobile_runtime_eval_logits(rwkvmobile_runtime_t handle, int model_id, const int * ids, int ids_len, float * logits, int logits_len) {
     if (handle == nullptr || ids == nullptr || logits == nullptr || ids_len <= 0 || logits_len <= 0) {
         return RWKV_ERROR_INVALID_PARAMETERS;
     }
     auto rt = static_cast<class runtime *>(handle);
     std::vector<int> ids_vec(ids, ids + ids_len);
     float *logits_ret = nullptr;
-    auto ret = rt->eval_logits(0, ids_vec, logits_ret);
+    auto ret = rt->eval_logits(model_id, ids_vec, logits_ret);
     if (ret != RWKV_SUCCESS) {
         return ret;
     }
     memcpy(logits, logits_ret, logits_len * sizeof(float));
-    rt->free_logits_if_allocated(0, logits_ret);
+    rt->free_logits_if_allocated(model_id, logits_ret);
     return RWKV_SUCCESS;
 }
 
 int rwkvmobile_runtime_eval_chat_with_history_async(
     rwkvmobile_runtime_t handle,
+    int model_id,
     const char ** inputs,
     const int num_inputs,
     const int max_tokens,
@@ -74,8 +75,8 @@ int rwkvmobile_runtime_eval_chat_with_history_async(
     }
 
     auto rt = static_cast<class runtime *>(handle);
-    rt->set_is_generating(0, true);
-    rt->set_stop_signal(0, false);
+    rt->set_is_generating(model_id, true);
+    rt->set_stop_signal(model_id, false);
     std::vector<std::string> inputs_vec;
     for (int i = 0; i < num_inputs; i++) {
         inputs_vec.push_back(std::string(inputs[i]));
@@ -83,7 +84,7 @@ int rwkvmobile_runtime_eval_chat_with_history_async(
 
     std::thread generation_thread([=]() {
         int ret = rt->chat(
-            0,
+            model_id,
             inputs_vec,
             max_tokens,
             callback,
@@ -98,6 +99,7 @@ int rwkvmobile_runtime_eval_chat_with_history_async(
 
 int rwkvmobile_runtime_gen_completion_async(
     rwkvmobile_runtime_t handle,
+    int model_id,
     const char * prompt,
     const int max_tokens,
     const int stop_code,
@@ -107,12 +109,12 @@ int rwkvmobile_runtime_gen_completion_async(
     }
 
     auto rt = static_cast<class runtime *>(handle);
-    rt->clear_response_buffer(0);
-    rt->set_is_generating(0, true);
-    rt->set_stop_signal(0, false);
+    rt->clear_response_buffer(model_id);
+    rt->set_is_generating(model_id, true);
+    rt->set_stop_signal(model_id, false);
     std::thread generation_thread([=]() {
         int ret = rt->gen_completion(
-            0,
+            model_id,
             std::string(prompt),
             max_tokens,
             stop_code,
@@ -127,6 +129,7 @@ int rwkvmobile_runtime_gen_completion_async(
 
 int rwkvmobile_runtime_gen_completion(
     rwkvmobile_runtime_t handle,
+    int model_id,
     const char * prompt,
     const int max_tokens,
     const int stop_code,
@@ -136,55 +139,55 @@ int rwkvmobile_runtime_gen_completion(
     }
 
     auto rt = static_cast<class runtime *>(handle);
-    rt->clear_response_buffer(0);
+    rt->clear_response_buffer(model_id);
     return rt->gen_completion(
-        0,
+        model_id,
         std::string(prompt),
         max_tokens,
         stop_code,
         callback);
 }
 
-int rwkvmobile_runtime_stop_generation(rwkvmobile_runtime_t runtime) {
+int rwkvmobile_runtime_stop_generation(rwkvmobile_runtime_t runtime, int model_id) {
     if (runtime == nullptr) {
         return RWKV_ERROR_INVALID_PARAMETERS;
     }
     auto rt = static_cast<class runtime *>(runtime);
-    rt->set_stop_signal(0, true);
+    rt->set_stop_signal(model_id, true);
     return RWKV_SUCCESS;
 }
 
-int rwkvmobile_runtime_is_generating(rwkvmobile_runtime_t runtime) {
+int rwkvmobile_runtime_is_generating(rwkvmobile_runtime_t runtime, int model_id) {
     if (runtime == nullptr) {
         return RWKV_ERROR_INVALID_PARAMETERS;
     }
     auto rt = static_cast<class runtime *>(runtime);
-    bool is_generating = rt->is_generating(0);
+    bool is_generating = rt->is_generating(model_id);
     return is_generating;
 }
 
-int rwkvmobile_runtime_clear_state(rwkvmobile_runtime_t handle) {
+int rwkvmobile_runtime_clear_state(rwkvmobile_runtime_t handle, int model_id) {
     if (handle == nullptr) {
         return RWKV_ERROR_INVALID_PARAMETERS;
     }
     auto rt = static_cast<class runtime *>(handle);
-    return rt->clear_state(0);
+    return rt->clear_state(model_id);
 }
 
-int rwkvmobile_runtime_load_initial_state(rwkvmobile_runtime_t handle, const char * state_path) {
+int rwkvmobile_runtime_load_initial_state(rwkvmobile_runtime_t handle, int model_id, const char * state_path) {
     if (handle == nullptr || state_path == nullptr) {
         return RWKV_ERROR_INVALID_PARAMETERS;
     }
     auto rt = static_cast<class runtime *>(handle);
-    return rt->load_initial_state(0, state_path);
+    return rt->load_initial_state(model_id, state_path);
 }
 
-void rwkvmobile_runtime_clear_initial_state(rwkvmobile_runtime_t handle) {
+void rwkvmobile_runtime_clear_initial_state(rwkvmobile_runtime_t handle, int model_id) {
     if (handle == nullptr) {
         return;
     }
     auto rt = static_cast<class runtime *>(handle);
-    rt->clear_initial_state(0);
+    rt->clear_initial_state(model_id);
 }
 
 int rwkvmobile_runtime_get_available_backend_names(char * backend_names_buffer, int buffer_size) {
@@ -204,7 +207,7 @@ int rwkvmobile_runtime_get_available_backend_names(char * backend_names_buffer, 
     return RWKV_SUCCESS;
 }
 
-struct sampler_params rwkvmobile_runtime_get_sampler_params(rwkvmobile_runtime_t runtime) {
+struct sampler_params rwkvmobile_runtime_get_sampler_params(rwkvmobile_runtime_t runtime, int model_id) {
     struct sampler_params params;
     params.temperature = 0;
     params.top_k = 0;
@@ -213,21 +216,21 @@ struct sampler_params rwkvmobile_runtime_get_sampler_params(rwkvmobile_runtime_t
         return params;
     }
     auto rt = static_cast<class runtime *>(runtime);
-    params.temperature = rt->get_temperature(0);
-    params.top_k = rt->get_top_k(0);
-    params.top_p = rt->get_top_p(0);
+    params.temperature = rt->get_temperature(model_id);
+    params.top_k = rt->get_top_k(model_id);
+    params.top_p = rt->get_top_p(model_id);
     return params;
 }
 
-void rwkvmobile_runtime_set_sampler_params(rwkvmobile_runtime_t runtime, struct sampler_params params) {
+void rwkvmobile_runtime_set_sampler_params(rwkvmobile_runtime_t runtime, int model_id, struct sampler_params params) {
     if (runtime == nullptr) {
         return;
     }
     auto rt = static_cast<class runtime *>(runtime);
-    rt->set_sampler_params(0, params.temperature, params.top_k, params.top_p);
+    rt->set_sampler_params(model_id, params.temperature, params.top_k, params.top_p);
 }
 
-struct penalty_params rwkvmobile_runtime_get_penalty_params(rwkvmobile_runtime_t runtime) {
+struct penalty_params rwkvmobile_runtime_get_penalty_params(rwkvmobile_runtime_t runtime, int model_id) {
     struct penalty_params params;
     params.presence_penalty = 0;
     params.frequency_penalty = 0;
@@ -236,34 +239,34 @@ struct penalty_params rwkvmobile_runtime_get_penalty_params(rwkvmobile_runtime_t
         return params;
     }
     auto rt = static_cast<class runtime *>(runtime);
-    params.presence_penalty = rt->get_presence_penalty(0);
-    params.frequency_penalty = rt->get_frequency_penalty(0);
-    params.penalty_decay = rt->get_penalty_decay(0);
+    params.presence_penalty = rt->get_presence_penalty(model_id);
+    params.frequency_penalty = rt->get_frequency_penalty(model_id);
+    params.penalty_decay = rt->get_penalty_decay(model_id);
     return params;
 }
 
-void rwkvmobile_runtime_set_penalty_params(rwkvmobile_runtime_t runtime, struct penalty_params params) {
+void rwkvmobile_runtime_set_penalty_params(rwkvmobile_runtime_t runtime, int model_id, struct penalty_params params) {
     if (runtime == nullptr) {
         return;
     }
     auto rt = static_cast<class runtime *>(runtime);
-    rt->set_penalty_params(0, params.presence_penalty, params.frequency_penalty, params.penalty_decay);
+    rt->set_penalty_params(model_id, params.presence_penalty, params.frequency_penalty, params.penalty_decay);
 }
 
-int rwkvmobile_runtime_set_prompt(rwkvmobile_runtime_t runtime, const char * prompt) {
+int rwkvmobile_runtime_set_prompt(rwkvmobile_runtime_t runtime, int model_id, const char * prompt) {
     if (runtime == nullptr || prompt == nullptr) {
         return RWKV_ERROR_INVALID_PARAMETERS;
     }
     auto rt = static_cast<class runtime *>(runtime);
-    return rt->set_prompt(0, prompt);
+    return rt->set_prompt(model_id, prompt);
 }
 
-int rwkvmobile_runtime_get_prompt(rwkvmobile_runtime_t runtime, char * prompt, const int buf_len) {
+int rwkvmobile_runtime_get_prompt(rwkvmobile_runtime_t runtime, int model_id, char * prompt, const int buf_len) {
     if (runtime == nullptr || prompt == nullptr || buf_len <= 0) {
         return RWKV_ERROR_INVALID_PARAMETERS;
     }
     auto rt = static_cast<class runtime *>(runtime);
-    std::string prompt_str = rt->get_prompt(0);
+    std::string prompt_str = rt->get_prompt(model_id);
     if (prompt_str.size() >= buf_len) {
         return RWKV_ERROR_ALLOC;
     }
@@ -286,7 +289,7 @@ void rwkvmobile_runtime_add_adsp_library_path(const char * path) {
 #endif
 }
 
-void rwkvmobile_runtime_set_qnn_library_path(rwkvmobile_runtime_t runtime, const char * path) {
+void rwkvmobile_runtime_set_qnn_library_path(rwkvmobile_runtime_t runtime, int model_id, const char * path) {
 #ifndef _WIN32
     auto ld_lib_path_char = getenv("LD_LIBRARY_PATH");
     std::string ld_lib_path;
@@ -303,165 +306,165 @@ void rwkvmobile_runtime_set_qnn_library_path(rwkvmobile_runtime_t runtime, const
         return;
     }
     auto rt = static_cast<class runtime *>(runtime);
-    rt->backend_set_extra_str(0, path);
+    rt->backend_set_extra_str(model_id, path);
 }
 
-double rwkvmobile_runtime_get_avg_decode_speed(rwkvmobile_runtime_t runtime) {
+double rwkvmobile_runtime_get_avg_decode_speed(rwkvmobile_runtime_t runtime, int model_id) {
     if (runtime == nullptr) {
         return RWKV_ERROR_INVALID_PARAMETERS;
     }
     auto rt = static_cast<class runtime *>(runtime);
-    return rt->get_avg_decode_speed(0);
+    return rt->get_avg_decode_speed(model_id);
 }
 
-double rwkvmobile_runtime_get_avg_prefill_speed(rwkvmobile_runtime_t runtime) {
+double rwkvmobile_runtime_get_avg_prefill_speed(rwkvmobile_runtime_t runtime, int model_id) {
     if (runtime == nullptr) {
         return RWKV_ERROR_INVALID_PARAMETERS;
     }
     auto rt = static_cast<class runtime *>(runtime);
-    return rt->get_avg_prefill_speed(0);
+    return rt->get_avg_prefill_speed(model_id);
 }
 
-int rwkvmobile_runtime_load_vision_encoder(rwkvmobile_runtime_t runtime, const char * encoder_path) {
+int rwkvmobile_runtime_load_vision_encoder(rwkvmobile_runtime_t runtime, int model_id, const char * encoder_path) {
 #if ENABLE_VISION
     if (runtime == nullptr || encoder_path == nullptr) {
         return RWKV_ERROR_INVALID_PARAMETERS;
     }
     auto rt = static_cast<class runtime *>(runtime);
-    return rt->load_vision_encoder(0, encoder_path);
+    return rt->load_vision_encoder(model_id, encoder_path);
 #else
     return RWKV_ERROR_UNSUPPORTED;
 #endif
 }
 
-int rwkvmobile_runtime_load_vision_encoder_and_adapter(rwkvmobile_runtime_t runtime, const char * encoder_path, const char * adapter_path) {
+int rwkvmobile_runtime_load_vision_encoder_and_adapter(rwkvmobile_runtime_t runtime, int model_id, const char * encoder_path, const char * adapter_path) {
 #if ENABLE_VISION
     if (runtime == nullptr || encoder_path == nullptr || adapter_path == nullptr) {
         return RWKV_ERROR_INVALID_PARAMETERS;
     }
     auto rt = static_cast<class runtime *>(runtime);
-    return rt->load_vision_encoder(0, encoder_path, adapter_path);
+    return rt->load_vision_encoder(model_id, encoder_path, adapter_path);
 #else
     return RWKV_ERROR_UNSUPPORTED;
 #endif
 }
 
-int rwkvmobile_runtime_release_vision_encoder(rwkvmobile_runtime_t runtime) {
+int rwkvmobile_runtime_release_vision_encoder(rwkvmobile_runtime_t runtime, int model_id) {
 #if ENABLE_VISION
     if (runtime == nullptr) {
         return RWKV_SUCCESS;
     }
     auto rt = static_cast<class runtime *>(runtime);
-    return rt->release_vision_encoder(0);
+    return rt->release_vision_encoder(model_id);
 #else
     return RWKV_ERROR_UNSUPPORTED;
 #endif
 }
 
-int rwkvmobile_runtime_set_image_prompt(rwkvmobile_runtime_t runtime, const char * image_path) {
+int rwkvmobile_runtime_set_image_prompt(rwkvmobile_runtime_t runtime, int model_id, const char * image_path) {
 #if ENABLE_VISION
     if (runtime == nullptr || image_path == nullptr) {
         return RWKV_ERROR_INVALID_PARAMETERS;
     }
     auto rt = static_cast<class runtime *>(runtime);
-    return rt->set_image_prompt(0, image_path);
+    return rt->set_image_prompt(model_id, image_path);
 #else
     return RWKV_ERROR_UNSUPPORTED;
 #endif
 }
 
-int rwkvmobile_runtime_load_whisper_encoder(rwkvmobile_runtime_t runtime, const char * encoder_path) {
+int rwkvmobile_runtime_load_whisper_encoder(rwkvmobile_runtime_t runtime, int model_id, const char * encoder_path) {
 #if ENABLE_WHISPER
     if (runtime == nullptr || encoder_path == nullptr) {
         return RWKV_ERROR_INVALID_PARAMETERS;
     }
     auto rt = static_cast<class runtime *>(runtime);
-    return rt->load_whisper_encoder(0, encoder_path);
+    return rt->load_whisper_encoder(model_id, encoder_path);
 #else
     return RWKV_ERROR_UNSUPPORTED;
 #endif
 }
 
-int rwkvmobile_runtime_release_whisper_encoder(rwkvmobile_runtime_t runtime) {
+int rwkvmobile_runtime_release_whisper_encoder(rwkvmobile_runtime_t runtime, int model_id) {
 #if ENABLE_WHISPER
     if (runtime == nullptr) {
         return RWKV_SUCCESS;
     }
     auto rt = static_cast<class runtime *>(runtime);
-    return rt->release_whisper_encoder(0);
+    return rt->release_whisper_encoder(model_id);
 #else
     return RWKV_ERROR_UNSUPPORTED;
 #endif
 }
 
-int rwkvmobile_runtime_set_audio_prompt(rwkvmobile_runtime_t runtime, const char * audio_path) {
+int rwkvmobile_runtime_set_audio_prompt(rwkvmobile_runtime_t runtime, int model_id, const char * audio_path) {
 #if ENABLE_WHISPER
     if (runtime == nullptr || audio_path == nullptr) {
         return RWKV_ERROR_INVALID_PARAMETERS;
     }
     auto rt = static_cast<class runtime *>(runtime);
-    return rt->set_audio_prompt(0, audio_path);
+    return rt->set_audio_prompt(model_id, audio_path);
 #else
     return RWKV_ERROR_UNSUPPORTED;
 #endif
 }
 
-int rwkvmobile_runtime_set_token_banned(rwkvmobile_runtime_t runtime, const int * token_banned, int token_banned_len) {
+int rwkvmobile_runtime_set_token_banned(rwkvmobile_runtime_t runtime, int model_id, const int * token_banned, int token_banned_len) {
     if (runtime == nullptr || token_banned == nullptr || token_banned_len <= 0) {
         return RWKV_ERROR_INVALID_PARAMETERS;
     }
     auto rt = static_cast<class runtime *>(runtime);
     std::vector<int> token_banned_vec(token_banned, token_banned + token_banned_len);
-    rt->set_token_banned(0, token_banned_vec);
+    rt->set_token_banned(model_id, token_banned_vec);
     return RWKV_SUCCESS;
 }
 
-int rwkvmobile_runtime_set_eos_token(rwkvmobile_runtime_t runtime, const char * eos_token) {
+int rwkvmobile_runtime_set_eos_token(rwkvmobile_runtime_t runtime, int model_id, const char * eos_token) {
     if (runtime == nullptr || eos_token == nullptr) {
         return RWKV_ERROR_INVALID_PARAMETERS;
     }
     auto rt = static_cast<class runtime *>(runtime);
-    rt->set_eos_token(0, eos_token);
+    rt->set_eos_token(model_id, eos_token);
     return RWKV_SUCCESS;
 }
 
-int rwkvmobile_runtime_set_bos_token(rwkvmobile_runtime_t runtime, const char * bos_token) {
+int rwkvmobile_runtime_set_bos_token(rwkvmobile_runtime_t runtime, int model_id, const char * bos_token) {
     if (runtime == nullptr || bos_token == nullptr) {
         return RWKV_ERROR_INVALID_PARAMETERS;
     }
     auto rt = static_cast<class runtime *>(runtime);
-    rt->set_bos_token(0, bos_token);
+    rt->set_bos_token(model_id, bos_token);
     return RWKV_SUCCESS;
 }
 
-int rwkvmobile_runtime_set_user_role(rwkvmobile_runtime_t runtime, const char * user_role) {
+int rwkvmobile_runtime_set_user_role(rwkvmobile_runtime_t runtime, int model_id, const char * user_role) {
     if (runtime == nullptr || user_role == nullptr) {
         return RWKV_ERROR_INVALID_PARAMETERS;
     }
     auto rt = static_cast<class runtime *>(runtime);
-    rt->set_user_role(0, user_role);
+    rt->set_user_role(model_id, user_role);
     return RWKV_SUCCESS;
 }
 
-int rwkvmobile_runtime_set_response_role(rwkvmobile_runtime_t runtime, const char * response_role) {
+int rwkvmobile_runtime_set_response_role(rwkvmobile_runtime_t runtime, int model_id, const char * response_role) {
     if (runtime == nullptr || response_role == nullptr) {
         return RWKV_ERROR_INVALID_PARAMETERS;
     }
     auto rt = static_cast<class runtime *>(runtime);
-    rt->set_response_role(0, response_role);
+    rt->set_response_role(model_id, response_role);
     return RWKV_SUCCESS;
 }
 
-int rwkvmobile_runtime_set_thinking_token(rwkvmobile_runtime_t runtime, const char * thinking_token) {
+int rwkvmobile_runtime_set_thinking_token(rwkvmobile_runtime_t runtime, int model_id, const char * thinking_token) {
     if (runtime == nullptr || thinking_token == nullptr) {
         return RWKV_ERROR_INVALID_PARAMETERS;
     }
     auto rt = static_cast<class runtime *>(runtime);
-    rt->set_thinking_token(0, thinking_token);
+    rt->set_thinking_token(model_id, thinking_token);
     return RWKV_SUCCESS;
 }
 
-struct response_buffer rwkvmobile_runtime_get_response_buffer_content(rwkvmobile_runtime_t runtime) {
+struct response_buffer rwkvmobile_runtime_get_response_buffer_content(rwkvmobile_runtime_t runtime, int model_id) {
     struct response_buffer buffer;
     buffer.content = nullptr;
     buffer.length = 0;
@@ -470,7 +473,7 @@ struct response_buffer rwkvmobile_runtime_get_response_buffer_content(rwkvmobile
         return buffer;
     }
     auto rt = static_cast<class runtime *>(runtime);
-    std::string content = rt->get_response_buffer_content(0);
+    std::string content = rt->get_response_buffer_content(model_id);
     buffer.length = content.size();
     buffer.content = (char *)malloc(buffer.length * sizeof(char));
     if (buffer.content == nullptr) {
@@ -478,7 +481,7 @@ struct response_buffer rwkvmobile_runtime_get_response_buffer_content(rwkvmobile
     }
     memset(buffer.content, 0, buffer.length);
     strncpy(buffer.content, content.c_str(), buffer.length);
-    buffer.eos_found = rt->get_response_buffer_eos_found(0);
+    buffer.eos_found = rt->get_response_buffer_eos_found(model_id);
     return buffer;
 }
 
@@ -489,7 +492,7 @@ void rwkvmobile_runtime_free_response_buffer(struct response_buffer buffer) {
     free((void *)buffer.content);
 }
 
-struct token_ids rwkvmobile_runtime_get_response_buffer_ids(rwkvmobile_runtime_t runtime) {
+struct token_ids rwkvmobile_runtime_get_response_buffer_ids(rwkvmobile_runtime_t runtime, int model_id) {
     struct token_ids ids;
     ids.ids = nullptr;
     ids.len = 0;
@@ -497,7 +500,7 @@ struct token_ids rwkvmobile_runtime_get_response_buffer_ids(rwkvmobile_runtime_t
         return ids;
     }
     auto rt = static_cast<class runtime *>(runtime);
-    auto ids_vec = rt->get_response_buffer_ids(0);
+    auto ids_vec = rt->get_response_buffer_ids(model_id);
     ids.ids = (int32_t *)malloc(ids_vec.size() * sizeof(int32_t));
     if (ids.ids == nullptr) {
         return ids;
@@ -540,14 +543,14 @@ int rwkvmobile_runtime_sparktts_release_models(rwkvmobile_runtime_t runtime) {
 #endif
 }
 
-int rwkvmobile_runtime_run_spark_tts_streaming_async(rwkvmobile_runtime_t runtime, const char * tts_text, const char * prompt_audio_text, const char * prompt_audio_path, const char * output_wav_path) {
+int rwkvmobile_runtime_run_spark_tts_streaming_async(rwkvmobile_runtime_t runtime, int model_id, const char * tts_text, const char * prompt_audio_text, const char * prompt_audio_path, const char * output_wav_path) {
 #if ENABLE_TTS
     if (runtime == nullptr || tts_text == nullptr || prompt_audio_path == nullptr || output_wav_path == nullptr) {
         return RWKV_ERROR_INVALID_PARAMETERS;
     }
     auto rt = static_cast<class runtime *>(runtime);
-    rt->set_is_generating(0, true);
-    rt->set_stop_signal(0, false);
+    rt->set_is_generating(model_id, true);
+    rt->set_stop_signal(model_id, false);
     std::string prompt_audio_text_str;
     if (prompt_audio_text == nullptr) {
         prompt_audio_text_str = "";
@@ -555,7 +558,7 @@ int rwkvmobile_runtime_run_spark_tts_streaming_async(rwkvmobile_runtime_t runtim
         prompt_audio_text_str = std::string(prompt_audio_text);
     }
     std::thread generation_thread([=]() {
-        int ret = rt->run_spark_tts_streaming(0, tts_text, prompt_audio_text_str, prompt_audio_path, output_wav_path);
+        int ret = rt->run_spark_tts_streaming(model_id, tts_text, prompt_audio_text_str, prompt_audio_path, output_wav_path);
         return ret;
     });
 
@@ -592,12 +595,12 @@ int rwkvmobile_runtime_tts_register_text_normalizer(rwkvmobile_runtime_t runtime
 #endif
 }
 
-float rwkvmobile_runtime_get_prefill_progress(rwkvmobile_runtime_t runtime) {
+float rwkvmobile_runtime_get_prefill_progress(rwkvmobile_runtime_t runtime, int model_id) {
     if (runtime == nullptr) {
         return 0;
     }
     auto rt = static_cast<class runtime *>(runtime);
-    return rt->get_prefill_progress(0);
+    return rt->get_prefill_progress(model_id);
 }
 
 const char * rwkvmobile_get_platform_name() {
