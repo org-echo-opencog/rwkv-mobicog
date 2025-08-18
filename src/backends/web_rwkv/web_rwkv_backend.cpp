@@ -48,7 +48,8 @@ int web_rwkv_backend::load_model(std::string model_path) {
 }
 
 int web_rwkv_backend::eval(int id, float *& logits) {
-    auto ret = infer_raw_last(&id, 1);
+    uint32_t id_u32 = (uint32_t)id;
+    auto ret = infer_raw_last(&id_u32, 1);
     if (!ret.len || !ret.logits) {
         return RWKV_ERROR_EVAL;
     }
@@ -61,7 +62,8 @@ int web_rwkv_backend::eval(int id, float *& logits) {
 }
 
 int web_rwkv_backend::eval(std::vector<int> ids, float *& logits, bool skip_logits_copy) {
-    auto ret = infer_raw_last(ids.data(), ids.size());
+    std::vector<uint32_t> ids_u32(ids.begin(), ids.end());
+    auto ret = infer_raw_last((const uint32_t *)ids_u32.data(), ids_u32.size());
     if (!ret.len || !ret.logits) {
         return RWKV_ERROR_EVAL;
     }
