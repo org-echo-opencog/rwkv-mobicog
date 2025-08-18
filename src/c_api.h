@@ -98,7 +98,7 @@ void rwkvmobile_runtime_set_penalty_params(rwkvmobile_runtime_t runtime, int mod
 
 void rwkvmobile_runtime_add_adsp_library_path(const char * path);
 
-void rwkvmobile_runtime_set_qnn_library_path(rwkvmobile_runtime_t runtime, int model_id, const char * path);
+void rwkvmobile_runtime_set_qnn_library_path(rwkvmobile_runtime_t runtime, const char * path);
 
 double rwkvmobile_runtime_get_avg_decode_speed(rwkvmobile_runtime_t runtime, int model_id);
 
