@@ -1628,6 +1628,7 @@ int qnn_backend::load_raw_states(std::vector<std::vector<half_float::half>> stat
 }
 
 int qnn_backend::release_model() {
+    LOGI("[QNN] release_model");
     // free graphs
     if (qnnDecodeGraphsCount > 0) {
         for (int i = 0; i < qnnDecodeGraphsCount; i++) {

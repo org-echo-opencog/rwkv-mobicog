@@ -29,6 +29,23 @@ namespace rwkvmobile {
 class runtime;
 
 struct ModelInstance {
+    ~ModelInstance() {
+        LOGI("[ModelInstance] Release model instance");
+#if defined(ENABLE_VISION) || defined(ENABLE_WHISPER)
+        if (multimodal_encoder) {
+            multimodal_encoder = nullptr;
+        }
+#endif
+        if (sampler) {
+            sampler = nullptr;
+        }
+        if (tokenizer) {
+            tokenizer = nullptr;
+        }
+        if (backend) {
+            backend = nullptr;
+        }
+    }
     std::string model_path;
     std::string backend_name;
     std::string tokenizer_path;

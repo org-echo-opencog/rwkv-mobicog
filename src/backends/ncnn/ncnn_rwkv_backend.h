@@ -9,6 +9,15 @@ namespace rwkvmobile {
 
 class ncnn_rwkv_backend : public execution_provider {
 public:
+    ~ncnn_rwkv_backend() {
+        if (state_head) {
+            state_head->delete_after();
+            delete state_head;
+            state_head = nullptr;
+        }
+        release_model();
+        release();
+    }
     int init(void * extra) override;
     int load_model(std::string model_path) override;
     int eval(int id, float *& logits) override;

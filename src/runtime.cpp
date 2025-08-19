@@ -1025,12 +1025,12 @@ int runtime::run_spark_tts_streaming(int model_id, std::string tts_text, std::st
         }
     });
 
+    llm_inference_thread.join();
+    detokenize_thread.join();
+
     LOGI("[TTS] LLM output tokens: %d", output_tokens.size());
     LOGI("[TTS] LLM prefill speed: %f tokens/s", get_avg_prefill_speed(model_id));
     LOGI("[TTS] LLM decode speed: %f tokens/s", get_avg_decode_speed(model_id));
-
-    llm_inference_thread.join();
-    detokenize_thread.join();
     if (!_tts_output_samples_buffer.empty()) {
         save_samples_to_wav(_tts_output_samples_buffer, output_wav_path, 16000);
     }
