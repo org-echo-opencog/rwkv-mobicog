@@ -17,7 +17,6 @@ public:
     ~qnn_backend() {
         if (state_head) {
             state_head->delete_after();
-            delete state_head;
             state_head = nullptr;
         }
         release_model();
