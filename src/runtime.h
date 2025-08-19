@@ -15,14 +15,7 @@
 
 #include "logger.h"
 #include "embedding/rwkv_embedding.h"
-
-#ifdef ENABLE_VISION
-#include "clip.h"
-#endif
-
-#ifdef ENABLE_WHISPER
-#include "whisper.h"
-#endif
+#include "multimodal/multimodal_encoder.h"
 
 #ifdef ENABLE_TTS
 #include "sparktts.h"
@@ -33,7 +26,6 @@
 
 namespace rwkvmobile {
 
-// Forward declaration
 class runtime;
 
 struct ModelInstance {
@@ -62,11 +54,8 @@ struct ModelInstance {
     bool is_generating = false;
     bool stop_signal = false;
 
-#ifdef ENABLE_VISION
-    std::unique_ptr<clip_ctx, std::function<void(clip_ctx*)>> vision_encoder;
-#endif
-#ifdef ENABLE_WHISPER
-    std::unique_ptr<whisper_context, std::function<void(whisper_context*)>> whisper_encoder;
+#if defined(ENABLE_VISION) || defined(ENABLE_WHISPER)
+    std::unique_ptr<MultimodalEncoder> multimodal_encoder;
 #endif
 };
 
@@ -78,17 +67,18 @@ public:
 #endif
         _soc_detect.detect_platform();
     };
-    ~runtime() {};
+
+    ~runtime() {
+        release();
+    };
     int load_model(std::string model_path, std::string backend_name, std::string tokenizer_path, void * extra);
     int release_model(int model_id);
+    int release();
 
     int eval_logits(int model_id, int id, float *& logits);
     int eval_logits(int model_id, std::vector<int> ids, float *& logits);
     int eval_logits_with_embeddings(int model_id, const float *embeddings, int n_tokens, float *& logits);
     void free_logits_if_allocated(int model_id, float *& logits);
-
-    // without history
-    int chat(int model_id, std::string input, const int max_length, void (*callback)(const char *, const int, const char *) = nullptr, bool enable_reasoning = false);
 
     // with history
     int chat(int model_id, std::vector<std::string> inputs, const int max_length, void (*callback)(const char *, const int, const char *) = nullptr, bool enable_reasoning = false);
@@ -155,10 +145,8 @@ public:
     // for state management
     int clear_state(int model_id);
 
-    int release();
-
+    // sampler and seed
     int set_seed(int model_id, int64_t seed);
-
     int64_t get_seed(int model_id);
 
     void set_user_role(int model_id, std::string role);
@@ -287,6 +275,7 @@ public:
     std::map<int, std::map<std::string, std::string>> get_loaded_models_info();
     std::string get_model_path_by_id(int model_id);
 
+    // misc
     inline void set_cache_dir(std::string cache_dir) { _cache_dir = cache_dir; }
 
 private:
@@ -318,8 +307,6 @@ private:
     std::string _cache_dir = "";
 
     soc_detect _soc_detect;
-
-    int _vocab_size = 0;
 
     std::thread _prefilling_thread;
 

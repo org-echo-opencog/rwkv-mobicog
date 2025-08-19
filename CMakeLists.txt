@@ -164,12 +164,14 @@ if (ENABLE_LLAMACPP_BACKEND)
         set(RWKV_MOBILE_SRCS ${RWKV_MOBILE_SRCS}
             src/multimodal/vision/clip.cpp
             src/multimodal/vision/llava.cpp
+            src/multimodal/vision/vision_encoder.cpp
         )
     endif()
 
     if (ENABLE_WHISPER)
         set(RWKV_MOBILE_SRCS ${RWKV_MOBILE_SRCS}
             src/multimodal/whisper/whisper.cpp
+            src/multimodal/whisper/whisper_encoder.cpp
         )
     endif()
 

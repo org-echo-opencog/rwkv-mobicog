@@ -33,13 +33,12 @@
 #include "coreml_rwkv_backend.h"
 #endif
 
-#ifdef ENABLE_VISION
-#include "llava.h"
-#include "clip.h"
+#if defined(ENABLE_VISION)
+#include "multimodal/vision/vision_encoder.h"
 #endif
 
-#ifdef ENABLE_WHISPER
-#include "whisper.h"
+#if defined(ENABLE_WHISPER)
+#include "multimodal/whisper/whisper_encoder.h"
 #endif
 
 #if defined(ENABLE_TTS)
@@ -213,15 +212,11 @@ int runtime::load_vision_encoder(int model_id, std::string model_path, std::stri
         return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
     }
     auto &model = _models.at(model_id);
-    auto adapter_path_cstr = adapter_path.empty() ? NULL : adapter_path.c_str();
-    model->vision_encoder = std::unique_ptr<clip_ctx, std::function<void(clip_ctx*)>>(clip_model_load(model_path.c_str(), adapter_path_cstr, 0),
-        [](clip_ctx *p) {
-            clip_free(p);
-        });
-    if (model->vision_encoder == nullptr) {
-        return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
+    model->multimodal_encoder = std::make_unique<VisionEncoder>();
+    if (model->multimodal_encoder == nullptr) {
+        return RWKV_ERROR_ALLOC;
     }
-    return RWKV_SUCCESS;
+    return model->multimodal_encoder->LoadModel(model_path, adapter_path);
 }
 
 int runtime::release_vision_encoder(int model_id) {
@@ -229,7 +224,7 @@ int runtime::release_vision_encoder(int model_id) {
         return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
     }
     auto &model = _models.at(model_id);
-    model->vision_encoder = nullptr;
+    model->multimodal_encoder.reset();
     return RWKV_SUCCESS;
 }
 #endif
@@ -240,16 +235,11 @@ int runtime::load_whisper_encoder(int model_id, std::string model_path) {
         return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
     }
     auto &model = _models.at(model_id);
-    whisper_context_params cparams = whisper_context_default_params();
-    model->whisper_encoder = std::unique_ptr<whisper_context, std::function<void(whisper_context*)>>(whisper_init_from_file_with_params(model_path.c_str(), cparams),
-        [](whisper_context *p) {
-            whisper_free(p);
-        });
-    if (model->whisper_encoder == nullptr) {
-        return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
+    model->multimodal_encoder = std::make_unique<WhisperEncoder>();
+    if (model->multimodal_encoder == nullptr) {
+        return RWKV_ERROR_ALLOC;
     }
-    whisper_init_state(model->whisper_encoder.get());
-    return RWKV_SUCCESS;
+    return model->multimodal_encoder->LoadModel(model_path, "");
 }
 
 int runtime::release_whisper_encoder(int model_id) {
@@ -257,7 +247,7 @@ int runtime::release_whisper_encoder(int model_id) {
         return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
     }
     auto &model = _models.at(model_id);
-    model->whisper_encoder = nullptr;
+    model->multimodal_encoder.reset();
     return RWKV_SUCCESS;
 }
 #endif
@@ -679,7 +669,7 @@ int runtime::set_image_prompt(int model_id, std::string path) {
         return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
     }
     auto &model = _models.at(model_id);
-    if (model->backend == nullptr || model->tokenizer == nullptr || model->vision_encoder == nullptr) {
+    if (model->backend == nullptr || model->tokenizer == nullptr || model->multimodal_encoder == nullptr) {
         return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
     }
     std::string prompt = "<img src=\"" + path + "\">";
@@ -707,8 +697,9 @@ int runtime::set_image_prompt(int model_id, std::string path) {
     }
 
     auto start = std::chrono::high_resolution_clock::now();
-    auto embd = llava_image_embed_make_with_filename(model->vision_encoder.get(), 4, path.c_str());
-    if (embd == nullptr) {
+    std::vector<float> embeddings;
+    int n_tokens;
+    if (!model->multimodal_encoder->Encode(path, embeddings, n_tokens)) {
         return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
     }
     auto end = std::chrono::high_resolution_clock::now();
@@ -716,7 +707,7 @@ int runtime::set_image_prompt(int model_id, std::string path) {
     float *logits = nullptr;
 
     start = std::chrono::high_resolution_clock::now();
-    int ret = eval_logits_with_embeddings(model_id, embd->embed, embd->n_image_pos, logits);
+    int ret = eval_logits_with_embeddings(model_id, embeddings.data(), n_tokens, logits);
     if (ret) {
         return ret;
     }
@@ -725,7 +716,6 @@ int runtime::set_image_prompt(int model_id, std::string path) {
     model->backend->get_state(model->backend->state_head->next->state);
     model->backend->state_head->next->last_logits.resize(model->backend->get_num_vocab());
     memcpy(model->backend->state_head->next->last_logits.data(), logits, model->backend->get_num_vocab() * sizeof(float));
-    llava_image_embed_free(embd);
     model->backend->free_logits_if_allocated(logits);
     return RWKV_SUCCESS;
 }
@@ -737,7 +727,7 @@ int runtime::set_audio_prompt(int model_id, std::string path) {
         return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
     }
     auto &model = _models.at(model_id);
-    if (model->backend == nullptr || model->tokenizer == nullptr || model->whisper_encoder == nullptr) {
+    if (model->backend == nullptr || model->tokenizer == nullptr || model->multimodal_encoder == nullptr) {
         return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
     }
     std::string prompt = "<audio src=\"" + path + "\">";
@@ -764,24 +754,18 @@ int runtime::set_audio_prompt(int model_id, std::string path) {
         model->backend->free_state(model->backend->state_head->next->state);
     }
 
-    wav_file wav;
-    wav.load(path);
-
     auto start = std::chrono::high_resolution_clock::now();
-    whisper_pcm_to_mel(model->whisper_encoder.get(), wav.samples.data(), wav.samples.size(), 4);
+    std::vector<float> embeddings;
+    int n_tokens;
+    if (!model->multimodal_encoder->Encode(path, embeddings, n_tokens)) {
+        return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
+    }
     auto end = std::chrono::high_resolution_clock::now();
-    LOGI("whisper_pcm_to_mel time: %lld ms", std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count());
-
-    start = std::chrono::high_resolution_clock::now();
-    whisper_encode(model->whisper_encoder.get(), 0, 4);
-    end = std::chrono::high_resolution_clock::now();
-    LOGI("whisper_encode time: %lld ms", std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count());
+    LOGI("whisper duration: %lld ms", std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count());
 
     float *logits = nullptr;
 
-    auto embd = whisper_get_adapter_output_tensor(model->whisper_encoder.get());
-
-    int ret = eval_logits_with_embeddings(model_id, (const float *)embd->data, embd->ne[1], logits);
+    int ret = eval_logits_with_embeddings(model_id, embeddings.data(), n_tokens, logits);
     if (ret) {
         return ret;
     }
@@ -1297,6 +1281,8 @@ void runtime::set_eos_token(int model_id, std::string token) {
     }
     auto &model = _models.at(model_id);
     model->eos_token = token;
+    model->stop_codes.clear();
+    model->stop_codes.push_back(token);
 }
 
 void runtime::set_thinking_token(int model_id, std::string thinking_token) {
@@ -1478,4 +1464,3 @@ std::string runtime::get_model_path_by_id(int model_id) {
 }
 
 } // namespace rwkvmobile
-
