@@ -371,7 +371,7 @@ int runtime::eval_logits(int model_id, std::vector<int> ids, float *& logits) {
     for (; i + _prefill_chunk_size <= ids.size(); i += _prefill_chunk_size) {
         auto ids_chunk = std::vector<int>(ids.begin() + i, ids.begin() + i + _prefill_chunk_size);
         ret = model->backend->eval(ids_chunk, logits);
-        if (i + _prefill_chunk_size < ids.size()) {
+        if (i + _prefill_chunk_size < ids.size() - 1) {
             model->backend->free_logits_if_allocated(logits);
         }
         if (ret != RWKV_SUCCESS) return ret;
