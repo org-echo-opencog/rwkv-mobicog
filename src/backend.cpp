@@ -6,7 +6,7 @@
 namespace rwkvmobile {
 
 state_node* execution_provider::match_and_load_state(const std::vector<int> &ids, std::vector<int> &new_ids_to_prefill) {
-    auto node = state_head;
+    auto node = state_head.get();
     size_t compare_pos = 0;
 
     // find the last node that matches the input text

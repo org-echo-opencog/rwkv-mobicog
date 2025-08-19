@@ -3,6 +3,7 @@
 
 #include <string>
 #include <vector>
+#include <memory>
 #include <any>
 #include "half.hpp"
 
@@ -46,7 +47,7 @@ public:
 
     std::string extra_str;
 
-    state_node * state_head = nullptr;
+    std::unique_ptr<state_node> state_head;
 
     int clear_state() {
         if (state_head != nullptr) {
@@ -54,7 +55,7 @@ public:
             set_state(state_head->state);
         } else {
             zero_state();
-            state_head = new state_node();
+            state_head = std::make_unique<state_node>();
             get_state(state_head->state);
         }
         return RWKV_SUCCESS;

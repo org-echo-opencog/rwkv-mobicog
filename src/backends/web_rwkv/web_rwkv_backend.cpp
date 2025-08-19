@@ -2,9 +2,9 @@
 #include <filesystem>
 
 #include "backend.h"
-#include "web_rwkv_ffi.h"
 #include "web_rwkv_backend.h"
 #include "commondef.h"
+#include <memory>
 
 namespace rwkvmobile {
 
@@ -59,9 +59,6 @@ int web_rwkv_backend::eval(int id, float *& logits) {
         return RWKV_ERROR_EVAL;
     }
     logits_len_from_backend = ret.len;
-    // if (ret.len != vocab_size) {
-    //     return RWKV_ERROR_EVAL;
-    // }
     logits = ret.logits;
     return RWKV_SUCCESS;
 }
@@ -73,9 +70,6 @@ int web_rwkv_backend::eval(std::vector<int> ids, float *& logits, bool skip_logi
         return RWKV_ERROR_EVAL;
     }
     logits_len_from_backend = ret.len;
-    // if (ret.len != vocab_size) {
-    //     return RWKV_ERROR_EVAL;
-    // }
     logits = ret.logits;
     return RWKV_SUCCESS;
 }
@@ -105,7 +99,7 @@ int web_rwkv_backend::get_state(std::any &state) {
     if (!raw.len || !raw.state) {
         return RWKV_ERROR_BACKEND | RWKV_ERROR_INVALID_PARAMETERS;
     }
-    state = raw;
+    state = std::make_shared<web_rwkv_state>(raw);
     return RWKV_SUCCESS;
 }
 
@@ -113,23 +107,27 @@ int web_rwkv_backend::set_state(std::any state) {
     if (!state.has_value()) {
         return RWKV_ERROR_BACKEND | RWKV_ERROR_INVALID_PARAMETERS;
     }
-    struct StateRaw raw = std::any_cast<struct StateRaw>(state);
-    if (!raw.len || !raw.state) {
+    try {
+        const auto& state_ptr = std::any_cast<const std::shared_ptr<web_rwkv_state>&>(state);
+        if (!state_ptr) {
+            return RWKV_ERROR_BACKEND | RWKV_ERROR_INVALID_PARAMETERS;
+        }
+        const StateRaw& raw = state_ptr->raw;
+        if (!raw.len || !raw.state) {
+            return RWKV_ERROR_BACKEND | RWKV_ERROR_INVALID_PARAMETERS;
+        }
+        ::set_state(raw);
+        return RWKV_SUCCESS;
+    } catch (const std::bad_any_cast& e) {
         return RWKV_ERROR_BACKEND | RWKV_ERROR_INVALID_PARAMETERS;
     }
-    ::set_state(raw);
-    return RWKV_SUCCESS;
 }
 
 int web_rwkv_backend::free_state(std::any state) {
     if (!state.has_value()) {
         return RWKV_ERROR_BACKEND | RWKV_ERROR_INVALID_PARAMETERS;
     }
-    struct StateRaw raw = std::any_cast<struct StateRaw>(state);
-    if (!raw.len || !raw.state) {
-        return RWKV_ERROR_BACKEND | RWKV_ERROR_INVALID_PARAMETERS;
-    }
-    ::free_state(raw);
+    state.reset();
     return RWKV_SUCCESS;
 }
 
