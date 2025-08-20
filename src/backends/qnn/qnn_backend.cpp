@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <chrono>
 #include <any>
+#include <mutex>
 
 #include "qnn_backend.h"
 #include "commondef.h"
@@ -1553,44 +1554,47 @@ int qnn_backend::post_graph_execute(float *& logits) {
 }
 
 int qnn_backend::eval(int id, float *& logits) {
-    if (!isTensorInitialized) {
-        LOGD("qnn_backend::eval() isTensorInitialized: %d", isTensorInitialized);
-        return RWKV_ERROR_EVAL;
-    }
-
-    if (tokenInputTensor == nullptr) {
-        if (external_embeddings == nullptr) {
-            LOGE("The model requires external embeddings, but external embeddings are not loaded");
-            return RWKV_ERROR_IO;
-        }
-
-        if (tokenInputTensorEmbd == nullptr) {
-            LOGE("tokenInputTensorEmbd is not set");
-            return RWKV_ERROR_IO;
-        }
-
-        // assume that the external_embeddings has elementsize = 2
-        void *buffer = g_qnn_backend_context_ptr->qnnIOTensorUtils->getBuffer(tokenInputTensorEmbd);
-        if (buffer == nullptr) {
-            LOGE("Failed to get tokenInputTensorEmbd");
-            return RWKV_ERROR_IO;
-        }
-        uint16_t *emb_ptr = (uint16_t*)external_embeddings.get();
-        memcpy(buffer, emb_ptr + hidden_size * id, hidden_size * sizeof(uint16_t));
-
-        if (RWKV_SUCCESS != execute_emb_decode_graph()) {
+    {
+        std::lock_guard<std::mutex> lock(g_qnn_backend_context_ptr->qnnMutex);
+        if (!isTensorInitialized) {
+            LOGD("qnn_backend::eval() isTensorInitialized: %d", isTensorInitialized);
             return RWKV_ERROR_EVAL;
         }
-    } else {
-        int *token_input = (int*)g_qnn_backend_context_ptr->qnnIOTensorUtils->getBuffer(tokenInputTensor);
-        if (token_input == nullptr) {
-            LOGE("Failed to get tokenInputTensor");
-            return RWKV_ERROR_IO;
-        }
-        *token_input = id;
 
-        if (RWKV_SUCCESS != execute_decode_graph()) {
-            return RWKV_ERROR_EVAL;
+        if (tokenInputTensor == nullptr) {
+            if (external_embeddings == nullptr) {
+                LOGE("The model requires external embeddings, but external embeddings are not loaded");
+                return RWKV_ERROR_IO;
+            }
+
+            if (tokenInputTensorEmbd == nullptr) {
+                LOGE("tokenInputTensorEmbd is not set");
+                return RWKV_ERROR_IO;
+            }
+
+            // assume that the external_embeddings has elementsize = 2
+            void *buffer = g_qnn_backend_context_ptr->qnnIOTensorUtils->getBuffer(tokenInputTensorEmbd);
+            if (buffer == nullptr) {
+                LOGE("Failed to get tokenInputTensorEmbd");
+                return RWKV_ERROR_IO;
+            }
+            uint16_t *emb_ptr = (uint16_t*)external_embeddings.get();
+            memcpy(buffer, emb_ptr + hidden_size * id, hidden_size * sizeof(uint16_t));
+
+            if (RWKV_SUCCESS != execute_emb_decode_graph()) {
+                return RWKV_ERROR_EVAL;
+            }
+        } else {
+            int *token_input = (int*)g_qnn_backend_context_ptr->qnnIOTensorUtils->getBuffer(tokenInputTensor);
+            if (token_input == nullptr) {
+                LOGE("Failed to get tokenInputTensor");
+                return RWKV_ERROR_IO;
+            }
+            *token_input = id;
+
+            if (RWKV_SUCCESS != execute_decode_graph()) {
+                return RWKV_ERROR_EVAL;
+            }
         }
     }
 
@@ -1598,94 +1602,97 @@ int qnn_backend::eval(int id, float *& logits) {
 }
 
 int qnn_backend::eval(std::vector<int> ids, float *& logits, bool skip_logits_copy) {
-    if (ids.empty()) return RWKV_ERROR_EVAL;
+    {
+        std::lock_guard<std::mutex> lock(g_qnn_backend_context_ptr->qnnMutex);
+        if (ids.empty()) return RWKV_ERROR_EVAL;
 
-    if (tokenInputTensor == nullptr) {
-        if (external_embeddings == nullptr) {
-            LOGE("The model requires external embeddings, but external embeddings are not loaded");
-            return RWKV_ERROR_IO;
-        }
-
-        if (tokenInputTensorEmbd == nullptr) {
-            LOGE("tokenInputTensorEmbd is not set");
-            return RWKV_ERROR_IO;
-        }
-
-        int idx = 0;
-        for (; idx + embdPrefillSequenceLength <= ids.size(); idx += embdPrefillSequenceLength) {
-            uint16_t *buffer = (uint16_t*)g_qnn_backend_context_ptr->qnnIOTensorUtils->getBuffer(tokenInputTensorEmbdPrefill);
-            if (buffer == nullptr) {
-                LOGE("Failed to get tokenInputTensorEmbdPrefill");
+        if (tokenInputTensor == nullptr) {
+            if (external_embeddings == nullptr) {
+                LOGE("The model requires external embeddings, but external embeddings are not loaded");
                 return RWKV_ERROR_IO;
             }
-            uint16_t *emb_ptr = (uint16_t*)external_embeddings.get();
-            for (int i = 0; i < embdPrefillSequenceLength; i++) {
-                memcpy(buffer + i * hidden_size, emb_ptr + hidden_size * ids[idx + i], hidden_size * sizeof(uint16_t));
-            }
 
-            if (RWKV_SUCCESS != execute_emb_prefill_graph()) {
-                return RWKV_ERROR_EVAL;
-            }
-        }
-
-        for (; idx < ids.size(); idx++) {
-            uint16_t *buffer = (uint16_t*)g_qnn_backend_context_ptr->qnnIOTensorUtils->getBuffer(tokenInputTensorEmbd);
-            if (buffer == nullptr) {
-                LOGE("Failed to get tokenInputTensorEmbd");
+            if (tokenInputTensorEmbd == nullptr) {
+                LOGE("tokenInputTensorEmbd is not set");
                 return RWKV_ERROR_IO;
             }
-            uint16_t *emb_ptr = (uint16_t*)external_embeddings.get();
-            memcpy(buffer, emb_ptr + hidden_size * ids[idx], hidden_size * sizeof(uint16_t));
 
-            if (RWKV_SUCCESS != execute_emb_decode_graph()) {
-                return RWKV_ERROR_EVAL;
+            int idx = 0;
+            for (; idx + embdPrefillSequenceLength <= ids.size(); idx += embdPrefillSequenceLength) {
+                uint16_t *buffer = (uint16_t*)g_qnn_backend_context_ptr->qnnIOTensorUtils->getBuffer(tokenInputTensorEmbdPrefill);
+                if (buffer == nullptr) {
+                    LOGE("Failed to get tokenInputTensorEmbdPrefill");
+                    return RWKV_ERROR_IO;
+                }
+                uint16_t *emb_ptr = (uint16_t*)external_embeddings.get();
+                for (int i = 0; i < embdPrefillSequenceLength; i++) {
+                    memcpy(buffer + i * hidden_size, emb_ptr + hidden_size * ids[idx + i], hidden_size * sizeof(uint16_t));
+                }
+
+                if (RWKV_SUCCESS != execute_emb_prefill_graph()) {
+                    return RWKV_ERROR_EVAL;
+                }
             }
-        }
-    } else {
-        if (prefillSequenceLength == 0) {
-            for (auto id : ids) {
-                if (RWKV_SUCCESS != eval(id, logits)) {
-                    return RWKV_ERROR_MODEL;
+
+            for (; idx < ids.size(); idx++) {
+                uint16_t *buffer = (uint16_t*)g_qnn_backend_context_ptr->qnnIOTensorUtils->getBuffer(tokenInputTensorEmbd);
+                if (buffer == nullptr) {
+                    LOGE("Failed to get tokenInputTensorEmbd");
+                    return RWKV_ERROR_IO;
+                }
+                uint16_t *emb_ptr = (uint16_t*)external_embeddings.get();
+                memcpy(buffer, emb_ptr + hidden_size * ids[idx], hidden_size * sizeof(uint16_t));
+
+                if (RWKV_SUCCESS != execute_emb_decode_graph()) {
+                    return RWKV_ERROR_EVAL;
                 }
             }
         } else {
-            int *token_input = (int*)g_qnn_backend_context_ptr->qnnIOTensorUtils->getBuffer(tokenInputTensorPrefill);
-            if (token_input == nullptr) {
-                LOGE("Failed to get tokenInputTensorPrefill");
-                return RWKV_ERROR_IO;
-            }
-            int idx = 0;
-
-            bool is_prefilling_usable = true;
-            auto start = std::chrono::high_resolution_clock::now();
-            for (; (idx + prefillSequenceLength) <= ids.size(); idx += prefillSequenceLength) {
-                for (int i = 0; i < prefillSequenceLength; i++) {
-                    token_input[i] = ids[idx + i];
+            if (prefillSequenceLength == 0) {
+                for (auto id : ids) {
+                    if (RWKV_SUCCESS != eval(id, logits)) {
+                        return RWKV_ERROR_MODEL;
+                    }
                 }
-                // LOGD("Prefilling using seq mode from %d to %d", idx, idx + prefillSequenceLength);
-
-                if (RWKV_SUCCESS != execute_prefill_graph()) {
-                    is_prefilling_usable = false;
-                    LOGE("QNN: prefill graph not usable; falling back to decode mode");
-                }
-                if (!is_prefilling_usable) {
-                    break;
-                }
-            }
-
-            auto end = std::chrono::high_resolution_clock::now();
-            prefill_speed = (ids.size() / prefillSequenceLength * prefillSequenceLength) * 1000000.0 / std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-
-            // LOGD("Prefilling tails using decode mode from %d to %d", idx, ids.size());
-            for (; idx < ids.size(); idx++) {
-                token_input = (int*)g_qnn_backend_context_ptr->qnnIOTensorUtils->getBuffer(tokenInputTensor);
+            } else {
+                int *token_input = (int*)g_qnn_backend_context_ptr->qnnIOTensorUtils->getBuffer(tokenInputTensorPrefill);
                 if (token_input == nullptr) {
-                    LOGE("Failed to get tokenInputTensor");
+                    LOGE("Failed to get tokenInputTensorPrefill");
                     return RWKV_ERROR_IO;
                 }
-                *token_input = ids[idx];
-                if (RWKV_SUCCESS != execute_decode_graph()) {
-                    return RWKV_ERROR_EVAL;
+                int idx = 0;
+
+                bool is_prefilling_usable = true;
+                auto start = std::chrono::high_resolution_clock::now();
+                for (; (idx + prefillSequenceLength) <= ids.size(); idx += prefillSequenceLength) {
+                    for (int i = 0; i < prefillSequenceLength; i++) {
+                        token_input[i] = ids[idx + i];
+                    }
+                    // LOGD("Prefilling using seq mode from %d to %d", idx, idx + prefillSequenceLength);
+
+                    if (RWKV_SUCCESS != execute_prefill_graph()) {
+                        is_prefilling_usable = false;
+                        LOGE("QNN: prefill graph not usable; falling back to decode mode");
+                    }
+                    if (!is_prefilling_usable) {
+                        break;
+                    }
+                }
+
+                auto end = std::chrono::high_resolution_clock::now();
+                prefill_speed = (ids.size() / prefillSequenceLength * prefillSequenceLength) * 1000000.0 / std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+
+                // LOGD("Prefilling tails using decode mode from %d to %d", idx, ids.size());
+                for (; idx < ids.size(); idx++) {
+                    token_input = (int*)g_qnn_backend_context_ptr->qnnIOTensorUtils->getBuffer(tokenInputTensor);
+                    if (token_input == nullptr) {
+                        LOGE("Failed to get tokenInputTensor");
+                        return RWKV_ERROR_IO;
+                    }
+                    *token_input = ids[idx];
+                    if (RWKV_SUCCESS != execute_decode_graph()) {
+                        return RWKV_ERROR_EVAL;
+                    }
                 }
             }
         }
@@ -1699,31 +1706,34 @@ int qnn_backend::eval(std::vector<int> ids, float *& logits, bool skip_logits_co
 }
 
 int qnn_backend::eval_with_embeddings(const float *embeddings, int n_tokens, float *& logits) {
-    if (!isTensorInitialized) return RWKV_ERROR_EVAL;
-    LOGD("[QNN] eval_with_embeddings: n_tokens: %d", n_tokens);
+    {
+        std::lock_guard<std::mutex> lock(g_qnn_backend_context_ptr->qnnMutex);
+        if (!isTensorInitialized) return RWKV_ERROR_EVAL;
+        LOGD("[QNN] eval_with_embeddings: n_tokens: %d", n_tokens);
 
-    int i = 0;
-    if (embdPrefillSequenceLength > 0) {
-        for (; i + embdPrefillSequenceLength <= n_tokens; i += embdPrefillSequenceLength) {
-            if (RWKV_SUCCESS != copy_float_to_qnn_tensor(tokenInputTensorEmbdPrefill, embeddings + i * hidden_size, embdPrefillSequenceLength * hidden_size)) {
-                LOGE("Failed to copy embeddings to tokenInputTensorEmbdPrefill");
+        int i = 0;
+        if (embdPrefillSequenceLength > 0) {
+            for (; i + embdPrefillSequenceLength <= n_tokens; i += embdPrefillSequenceLength) {
+                if (RWKV_SUCCESS != copy_float_to_qnn_tensor(tokenInputTensorEmbdPrefill, embeddings + i * hidden_size, embdPrefillSequenceLength * hidden_size)) {
+                    LOGE("Failed to copy embeddings to tokenInputTensorEmbdPrefill");
+                    return RWKV_ERROR_IO;
+                }
+
+                if (RWKV_SUCCESS != execute_emb_prefill_graph()) {
+                    return RWKV_ERROR_EVAL;
+                }
+            }
+        }
+
+        // leftovers
+        for (; i < n_tokens; i++) {
+            if (RWKV_SUCCESS != copy_float_to_qnn_tensor(tokenInputTensorEmbd, embeddings + i * hidden_size, hidden_size)) {
                 return RWKV_ERROR_IO;
             }
 
-            if (RWKV_SUCCESS != execute_emb_prefill_graph()) {
+            if (RWKV_SUCCESS != execute_emb_decode_graph()) {
                 return RWKV_ERROR_EVAL;
             }
-        }
-    }
-
-    // leftovers
-    for (; i < n_tokens; i++) {
-        if (RWKV_SUCCESS != copy_float_to_qnn_tensor(tokenInputTensorEmbd, embeddings + i * hidden_size, hidden_size)) {
-            return RWKV_ERROR_IO;
-        }
-
-        if (RWKV_SUCCESS != execute_emb_decode_graph()) {
-            return RWKV_ERROR_EVAL;
         }
     }
 

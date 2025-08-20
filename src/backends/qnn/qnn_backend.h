@@ -6,6 +6,8 @@
 #include "rwkv-qualcomm/Utils/IOTensor.hpp"
 #include "rmpack.h"
 
+#include <mutex>
+
 #ifndef _WIN32
 #include <MNN/Interpreter.hpp>
 #endif
@@ -39,6 +41,8 @@ public:
     Qnn_DeviceHandle_t qnnDeviceHandle = nullptr;
 
     IOTensor* qnnIOTensorUtils = nullptr;
+
+    std::mutex qnnMutex;
 };
 
 class qnn_backend : public execution_provider {
