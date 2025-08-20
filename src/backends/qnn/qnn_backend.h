@@ -40,8 +40,6 @@ public:
     Qnn_BackendHandle_t qnnBackendHandle = nullptr;
     Qnn_DeviceHandle_t qnnDeviceHandle = nullptr;
 
-    IOTensor* qnnIOTensorUtils = nullptr;
-
     std::mutex qnnMutex;
 };
 
@@ -128,6 +126,8 @@ private:
     Qnn_Tensor_t *tokenInputTensorPrefill = nullptr;
     Qnn_Tensor_t *tokenInputTensorEmbd = nullptr;
     Qnn_Tensor_t *tokenInputTensorEmbdPrefill = nullptr;
+
+    IOTensor* qnnIOTensorUtils = nullptr;
 
     size_t logitsOutputTensorSize = 0;
 
