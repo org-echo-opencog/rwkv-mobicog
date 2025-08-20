@@ -16,7 +16,7 @@ class qnn_backend_context {
 public:
     qnn_backend_context(std::string qnnBackendPath);
 
-    ~qnn_backend_context() = default;
+    ~qnn_backend_context();
 
     int qnn_create_power_config_id();
     int qnn_destory_power_config_id();

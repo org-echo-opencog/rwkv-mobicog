@@ -226,6 +226,37 @@ qnn_backend_context::qnn_backend_context(std::string qnnBackendPath) : qnnBacken
     }
 }
 
+qnn_backend_context::~qnn_backend_context() {
+    qnn_destory_power_config_id();
+
+
+    if (nullptr != qnnFunctionPointers.qnnInterface.propertyHasCapability) {
+        auto qnnDevicePropertyStatus = qnnFunctionPointers.qnnInterface.propertyHasCapability(QNN_PROPERTY_GROUP_DEVICE);
+        if (QNN_PROPERTY_NOT_SUPPORTED == qnnDevicePropertyStatus) {
+            LOGW("Device property is not supported");
+        }
+
+        auto qnnStatus = qnnFunctionPointers.qnnInterface.deviceFree(qnnDeviceHandle);
+        if (QNN_SUCCESS != qnnStatus && QNN_DEVICE_ERROR_UNSUPPORTED_FEATURE != qnnStatus) {
+            LOGE("Failed to free device");
+        }
+    }
+
+    if (qnnBackendLibraryHandle)
+        pal::dynamicloading::dlClose(qnnBackendLibraryHandle);
+
+    if ((nullptr != qnnBackendHandle && nullptr != qnnFunctionPointers.qnnInterface.backendFree) &&
+        QNN_BACKEND_NO_ERROR != qnnFunctionPointers.qnnInterface.backendFree(qnnBackendHandle)) {
+        LOGE("Could not terminate QNN backend");
+    }
+    qnnBackendHandle = nullptr;
+
+    if (nullptr != qnnFunctionPointers.qnnInterface.logFree && nullptr != qnnLogHandle) {
+        if (QNN_SUCCESS != qnnFunctionPointers.qnnInterface.logFree(qnnLogHandle)) {
+            LOGW("Unable to terminate logging in the backend.");
+        }
+    }
+}
 
 int qnn_backend_context::qnn_register_op_package(std::string package_path, std::string interface_provider) {
     if (nullptr == qnnFunctionPointers.qnnInterface.backendRegisterOpPackage) {
@@ -1833,42 +1864,13 @@ int qnn_backend::release_model() {
         }
     }
 
-    g_qnn_backend_context_ptr->qnn_destory_power_config_id();
-
-    if (nullptr != g_qnn_backend_context_ptr->qnnFunctionPointers.qnnInterface.propertyHasCapability) {
-        auto qnnDevicePropertyStatus = g_qnn_backend_context_ptr->qnnFunctionPointers.qnnInterface.propertyHasCapability(QNN_PROPERTY_GROUP_DEVICE);
-        if (QNN_PROPERTY_NOT_SUPPORTED == qnnDevicePropertyStatus) {
-            LOGW("Device property is not supported");
-        }
-
-        auto qnnStatus = g_qnn_backend_context_ptr->qnnFunctionPointers.qnnInterface.deviceFree(g_qnn_backend_context_ptr->qnnDeviceHandle);
-        if (QNN_SUCCESS != qnnStatus && QNN_DEVICE_ERROR_UNSUPPORTED_FEATURE != qnnStatus) {
-            LOGE("Failed to free device");
-        }
-    }
-
-    if (g_qnn_backend_context_ptr->qnnBackendLibraryHandle)
-        pal::dynamicloading::dlClose(g_qnn_backend_context_ptr->qnnBackendLibraryHandle);
-
-    if (qnnModelHandle)
-        pal::dynamicloading::dlClose(qnnModelHandle);
-
     for (int i = 0; i < graphConfigsInfoCount; i++) {
         delete graphConfigsInfo[i];
     }
     delete graphConfigsInfo;
 
-    if ((nullptr != g_qnn_backend_context_ptr->qnnBackendHandle && nullptr != g_qnn_backend_context_ptr->qnnFunctionPointers.qnnInterface.backendFree) &&
-        QNN_BACKEND_NO_ERROR != g_qnn_backend_context_ptr->qnnFunctionPointers.qnnInterface.backendFree(g_qnn_backend_context_ptr->qnnBackendHandle)) {
-        LOGE("Could not terminate QNN backend");
-    }
-    g_qnn_backend_context_ptr->qnnBackendHandle = nullptr;
-
-    if (nullptr != g_qnn_backend_context_ptr->qnnFunctionPointers.qnnInterface.logFree && nullptr != g_qnn_backend_context_ptr->qnnLogHandle) {
-        if (QNN_SUCCESS != g_qnn_backend_context_ptr->qnnFunctionPointers.qnnInterface.logFree(g_qnn_backend_context_ptr->qnnLogHandle)) {
-            LOGW("Unable to terminate logging in the backend.");
-        }
-    }
+    if (qnnModelHandle)
+        pal::dynamicloading::dlClose(qnnModelHandle);
 
     return RWKV_SUCCESS;
 }
