@@ -24,11 +24,13 @@ enum class StatusCode {
 };
 
 StatusCode getQnnFunctionPointers(std::string backendPath,
-                                  std::string modelPath,
                                   rwkv_app::QnnFunctionPointers* qnnFunctionPointers,
-                                  void** backendHandle,
-                                  bool loadModelLib,
-                                  void** modelHandleRtn);
+                                  void** backendHandle);
+
+StatusCode loadModelLib(std::string modelPath,
+                        rwkv_app::QnnFunctionPointers* qnnFunctionPointers,
+                        void** modelHandleRtn);
+
 StatusCode getQnnSystemFunctionPointers(std::string systemLibraryPath,
                                         rwkv_app::QnnFunctionPointers* qnnFunctionPointers);
 }  // namespace dynamicloadutil

@@ -38,6 +38,9 @@ namespace rwkvmobile {
 
 using namespace qnn::tools;
 
+// global qnn backend context pointer
+std::shared_ptr<qnn_backend_context> g_qnn_backend_context_ptr = nullptr;
+
 static void logCallback(const char* fmt,
     QnnLog_Level_t level,
     uint64_t timestamp,
@@ -92,13 +95,309 @@ static size_t getQnnDatatypeSize(Qnn_DataType_t dataType) {
     }
 }
 
-int qnn_backend::init(void * extra) {
-    if (extra != nullptr) {
-        qnnBackendPath = std::string((char *)extra);
-        LOGI("Setting QNN Backend Path: %s\n", qnnBackendPath.c_str());
+qnn_backend_context::qnn_backend_context(std::string qnnBackendPath) : qnnBackendPath(qnnBackendPath) {
+    if (qnnBackendPath.empty()) {
+        throw std::invalid_argument("QNN backend path is empty");
+    }
+
+    if (!std::filesystem::exists(qnnBackendPath)) {
+        throw std::runtime_error("QNN backend path does not exist");
+    }
+
+    auto qnnStatusCode = dynamicloadutil::getQnnFunctionPointers(
+        qnnBackendPath, &qnnFunctionPointers, &qnnBackendLibraryHandle);
+
+    if (dynamicloadutil::StatusCode::SUCCESS != qnnStatusCode) {
+        if (dynamicloadutil::StatusCode::FAIL_LOAD_BACKEND == qnnStatusCode) {
+            LOGE("Error initializing QNN Function Pointers: could not load backend: %s", qnnBackendPath.c_str());
+            throw std::runtime_error("Failed to get QNN function pointers");
+        // } else if (dynamicloadutil::StatusCode::FAIL_LOAD_MODEL == qnnStatusCode) {
+        //     LOGE("Error initializing QNN Function Pointers: could not load model:%s ", model_path.c_str());
+        //     throw std::runtime_error("Failed to get QNN function pointers, Failed to load model");
+        } else {
+            LOGE("Error initializing QNN Function Pointers");
+            throw std::runtime_error("Failed to get QNN function pointers");
+        }
+    }
+
+    std::string qnnSystemLibPath;
+    qnnBackendBasePath =
+#ifdef WIN32
+        qnnBackendPath.substr(0, qnnBackendPath.find("QnnHtp.dll"));// + "QnnSystem.dll";
+        qnnSystemLibPath = qnnBackendBasePath + "QnnSystem.dll";
+#else
+        qnnBackendPath.substr(0, qnnBackendPath.find("libQnnHtp.so"));// + "libQnnSystem.so";
+        qnnSystemLibPath = qnnBackendBasePath + "libQnnSystem.so";
+#endif
+
+    auto qnnSystemLibStatus = dynamicloadutil::getQnnSystemFunctionPointers(qnnSystemLibPath, &qnnFunctionPointers);
+    if (dynamicloadutil::StatusCode::SUCCESS != qnnSystemLibStatus) {
+        throw std::runtime_error("Failed to get QNN system function pointers");
+    }
+
+    // initialize QNN logging
+    auto logLevel = DEFAULT_QNN_LOGLEVEL;
+    if (QNN_SUCCESS !=
+        qnnFunctionPointers.qnnInterface.logCreate(logCallback, logLevel, &qnnLogHandle)) {
+        LOGW("Unable to initialize logging in the backend.");
+    }
+
+    // initialize QNN backend
+    auto qnnBackendStatus = qnnFunctionPointers.qnnInterface.backendCreate(
+        qnnLogHandle, nullptr, &qnnBackendHandle);
+    if (QNN_BACKEND_NO_ERROR != qnnBackendStatus) {
+      throw std::runtime_error("Failed to initialize backend due to error = " + std::to_string(qnnBackendStatus));
+    }
+    LOGI("Initialize Backend Returned Status = %lu", qnnBackendStatus);
+
+    if (nullptr != qnnFunctionPointers.qnnInterface.propertyHasCapability) {
+        auto qnnDevicePropertyStatus = qnnFunctionPointers.qnnInterface.propertyHasCapability(QNN_PROPERTY_GROUP_DEVICE);
+        if (QNN_PROPERTY_NOT_SUPPORTED == qnnDevicePropertyStatus) {
+            LOGW("Device property is not supported");
+        }
+        if (QNN_PROPERTY_ERROR_UNKNOWN_KEY == qnnDevicePropertyStatus) {
+            throw std::runtime_error("Device property is not known to backend");
+        }
+
+        auto qnnCreateDeviceStatus = qnnFunctionPointers.qnnInterface.deviceCreate(qnnLogHandle, nullptr, &qnnDeviceHandle);
+        if (QNN_SUCCESS != qnnCreateDeviceStatus && QNN_DEVICE_ERROR_UNSUPPORTED_FEATURE != qnnCreateDeviceStatus) {
+            LOGE("Failed to create device");
+            throw std::runtime_error("Failed to create device");
+        }
+    }
+
+    qnnIOTensorUtils = new IOTensor(BufferAlloc::SHARED_BUFFER, &qnnFunctionPointers.qnnInterface);
+
+    // power config apis
+    if (RWKV_SUCCESS != qnn_create_power_config_id()) {
+        LOGE("Could not create HTP power config id");
     } else {
-        qnnBackendPath = "libQnnHtp.so";
-        LOGI("Using default QNN Backend Path: %s\n", qnnBackendPath.c_str());
+        if (RWKV_SUCCESS != qnn_set_rpc_latency_and_polling()) {
+            LOGE("Could not set HTP rpc latency and polling");
+        } else if (RWKV_SUCCESS != qnn_set_power_config()) {
+            LOGE("Could not set HTP power config");
+        }
+    }
+
+    // load custom op package
+    soc_detect soc_detect;
+    soc_detect.detect_platform();
+    std::string htp_arch = soc_detect.get_htp_arch();
+    std::string custom_op_name = "libQnnRwkvWkvOpPackage.so";
+    if (htp_arch == "v79") {
+        custom_op_name = "libQnnRwkvWkvOpPackageV79.so";
+    } else if (htp_arch == "v75") {
+        custom_op_name = "libQnnRwkvWkvOpPackageV75.so";
+    } else if (htp_arch == "v73") {
+        custom_op_name = "libQnnRwkvWkvOpPackageV73.so";
+    } else if (htp_arch == "v69") {
+        custom_op_name = "libQnnRwkvWkvOpPackageV69.so";
+    } else if (htp_arch == "v68") {
+        custom_op_name = "libQnnRwkvWkvOpPackageV68.so";
+    }
+
+    std::vector<std::string> paths;
+    if (!qnnBackendBasePath.empty()) {
+        paths.push_back(qnnBackendBasePath);
+    } else {
+#ifndef _WIN32
+        const char* ldLibraryPath = getenv("LD_LIBRARY_PATH");
+        if (ldLibraryPath) {
+            std::string pathStr(ldLibraryPath);
+            std::stringstream ss(pathStr);
+            std::string dir;
+            while (std::getline(ss, dir, ':')) {
+                paths.push_back(dir);
+            }
+        }
+#endif
+    }
+
+    for (auto dir : paths) {
+        std::string fullPath = dir + "/" + custom_op_name;
+        std::ifstream file(fullPath);
+        if (file.good()) {
+            LOGI("Found %s in path: %s", custom_op_name.c_str(), fullPath.c_str());
+            if (RWKV_SUCCESS != qnn_register_op_package(fullPath, "RwkvWkvOpPackageInterfaceProvider")) {
+                LOGE("Op package registration failed");
+            }
+            break;
+        }
+    }
+}
+
+
+int qnn_backend_context::qnn_register_op_package(std::string package_path, std::string interface_provider) {
+    if (nullptr == qnnFunctionPointers.qnnInterface.backendRegisterOpPackage) {
+        LOGE("backendRegisterOpPackageFnHandle is nullptr.");
+        return RWKV_ERROR_UNSUPPORTED;
+    }
+    if (QNN_BACKEND_NO_ERROR != qnnFunctionPointers.qnnInterface.backendRegisterOpPackage(
+                qnnBackendHandle,
+                package_path.c_str(),
+                interface_provider.c_str(),
+                nullptr)) {
+        LOGE("Could not register Op Package: %s and interface provider: %s",
+            package_path.c_str(),
+            interface_provider.c_str());
+        return RWKV_ERROR_BACKEND | RWKV_ERROR_INIT;
+    }
+    LOGI("Registered Op Package: %s and interface provider: %s",
+        package_path.c_str(),
+        interface_provider.c_str()
+    );
+    return RWKV_SUCCESS;
+}
+
+int qnn_backend_context::qnn_create_power_config_id() {
+    QnnDevice_Infrastructure_t deviceInfra = nullptr;
+    Qnn_ErrorHandle_t devErr = qnnFunctionPointers.qnnInterface.deviceGetInfrastructure(&deviceInfra);
+    if (devErr != QNN_SUCCESS) {
+        LOGE("deviceGetInfrastructure error");
+        return RWKV_ERROR_BACKEND | RWKV_ERROR_INIT;
+    }
+    QnnHtpDevice_Infrastructure_t *htpInfra = static_cast<QnnHtpDevice_Infrastructure_t *>(deviceInfra);
+    QnnHtpDevice_PerfInfrastructure_t perfInfra = htpInfra->perfInfra;
+    Qnn_ErrorHandle_t perfInfraErr = perfInfra.createPowerConfigId(deviceId, coreId, &powerConfigId);
+    if (perfInfraErr != QNN_SUCCESS) {
+      LOGE("createPowerConfigId failed");
+      return RWKV_ERROR_BACKEND | RWKV_ERROR_INIT;
+    }
+    return RWKV_SUCCESS;
+}
+
+int qnn_backend_context::qnn_destory_power_config_id() {
+    QnnDevice_Infrastructure_t deviceInfra = nullptr;
+    Qnn_ErrorHandle_t devErr = qnnFunctionPointers.qnnInterface.deviceGetInfrastructure(&deviceInfra);
+    if (devErr != QNN_SUCCESS) {
+        LOGE("deviceGetInfrastructure error");
+        return RWKV_ERROR_BACKEND | RWKV_ERROR_RELEASE;
+    }
+    QnnHtpDevice_Infrastructure_t *htpInfra = static_cast<QnnHtpDevice_Infrastructure_t *>(deviceInfra);
+    QnnHtpDevice_PerfInfrastructure_t perfInfra = htpInfra->perfInfra;
+
+    Qnn_ErrorHandle_t perfInfraErr = perfInfra.destroyPowerConfigId(powerConfigId);
+    if (perfInfraErr != QNN_SUCCESS) {
+        LOGE("destroyPowerConfigId failed");
+        return RWKV_ERROR_BACKEND | RWKV_ERROR_RELEASE;
+    }
+    return RWKV_SUCCESS;
+}
+
+int qnn_backend_context::qnn_set_power_config() {
+    QnnDevice_Infrastructure_t deviceInfra = nullptr;
+    Qnn_ErrorHandle_t devErr = qnnFunctionPointers.qnnInterface.deviceGetInfrastructure(&deviceInfra);
+    if (devErr != QNN_SUCCESS) {
+        LOGE("device error");
+        return RWKV_ERROR_BACKEND | RWKV_ERROR_INIT;
+    }
+    QnnHtpDevice_Infrastructure_t *htpInfra = static_cast<QnnHtpDevice_Infrastructure_t *>(deviceInfra);
+    QnnHtpDevice_PerfInfrastructure_t perfInfra = htpInfra->perfInfra;
+
+    QnnHtpPerfInfrastructure_PowerConfig_t powerConfig;
+    memset(&powerConfig, 0, sizeof(powerConfig));
+    powerConfig.option                     = QNN_HTP_PERF_INFRASTRUCTURE_POWER_CONFIGOPTION_DCVS_V3;
+    powerConfig.dcvsV3Config.dcvsEnable    = 0; //True to enable Dcvs, False to disbale
+    powerConfig.dcvsV3Config.setDcvsEnable = 1;
+    powerConfig.dcvsV3Config.contextId     = powerConfigId;  //use the power config id created
+
+    // refer QnnHtpPerfInfrastructure.h
+    powerConfig.dcvsV3Config.powerMode       = QNN_HTP_PERF_INFRASTRUCTURE_POWERMODE_PERFORMANCE_MODE;
+    powerConfig.dcvsV3Config.setSleepLatency = 1; //True to consider Latency parameter otherwise False
+    powerConfig.dcvsV3Config.setBusParams    = 1; //True to consider Bus parameter otherwise False
+    powerConfig.dcvsV3Config.setCoreParams   = 1; //True to consider Core parameter otherwise False
+    powerConfig.dcvsV3Config.sleepDisable    = 1; //True to disable sleep, False to re-enable sleep
+    powerConfig.dcvsV3Config.setSleepDisable = 1; //True to consider sleep disable/enable parameter otherwise False
+
+    //Set Sleep latency parameter
+    powerConfig.dcvsV3Config.sleepLatency    =  40; // set dsp sleep latency ranges 10-65535 micro sec, refer hexagon sdk
+
+    //set Bus Clock Parameters (refer QnnHtpPerfInfrastructure.h)
+    powerConfig.dcvsV3Config.busVoltageCornerMin     = DCVS_VOLTAGE_VCORNER_MAX_VOLTAGE_CORNER;
+    powerConfig.dcvsV3Config.busVoltageCornerTarget  = DCVS_VOLTAGE_VCORNER_MAX_VOLTAGE_CORNER;
+    powerConfig.dcvsV3Config.busVoltageCornerMax     = DCVS_VOLTAGE_VCORNER_MAX_VOLTAGE_CORNER;
+
+    //set Core Clock Parameters (refer QnnHtpPerfInfrastructure.h)
+    powerConfig.dcvsV3Config.coreVoltageCornerMin    = DCVS_VOLTAGE_VCORNER_MAX_VOLTAGE_CORNER;
+    powerConfig.dcvsV3Config.coreVoltageCornerTarget = DCVS_VOLTAGE_VCORNER_MAX_VOLTAGE_CORNER;
+    powerConfig.dcvsV3Config.coreVoltageCornerMax    = DCVS_VOLTAGE_VCORNER_MAX_VOLTAGE_CORNER;
+
+    QnnHtpPerfInfrastructure_PowerConfig_t powerConfigHMX;
+    memset(&powerConfigHMX, 0, sizeof(powerConfigHMX));
+    powerConfigHMX.option                     = QNN_HTP_PERF_INFRASTRUCTURE_POWER_CONFIGOPTION_HMX_V2;
+    powerConfigHMX.hmxV2Config.hmxPickDefault = 0;
+    powerConfigHMX.hmxV2Config.hmxPerfMode    = QNN_HTP_PERF_INFRASTRUCTURE_CLK_PERF_HIGH;
+
+    powerConfigHMX.hmxV2Config.hmxVoltageCornerMin    = DCVS_EXP_VCORNER_TUR;
+    powerConfigHMX.hmxV2Config.hmxVoltageCornerTarget = DCVS_EXP_VCORNER_TUR;
+    powerConfigHMX.hmxV2Config.hmxVoltageCornerMax    = DCVS_EXP_VCORNER_TUR;
+
+    // Set power config with different performance parameters
+    const QnnHtpPerfInfrastructure_PowerConfig_t *powerConfigs[] = {&powerConfig, &powerConfigHMX, NULL};
+
+    Qnn_ErrorHandle_t perfInfraErr = perfInfra.setPowerConfig(powerConfigId, powerConfigs);
+    if (perfInfraErr != QNN_SUCCESS) {
+        const QnnHtpPerfInfrastructure_PowerConfig_t *powerConfigsWithoutHMX[] = {&powerConfig, NULL};
+        perfInfraErr = perfInfra.setPowerConfig(powerConfigId, powerConfigsWithoutHMX);
+    }
+    return RWKV_SUCCESS;
+}
+
+int qnn_backend_context::qnn_set_rpc_latency_and_polling() {
+    QnnDevice_Infrastructure_t deviceInfra = nullptr;
+    Qnn_ErrorHandle_t devErr = qnnFunctionPointers.qnnInterface.deviceGetInfrastructure(&deviceInfra);
+    if (devErr != QNN_SUCCESS) {
+      LOGE("device error");
+      return RWKV_ERROR_BACKEND | RWKV_ERROR_INIT;
+    }
+    QnnHtpDevice_Infrastructure_t *htpInfra = static_cast<QnnHtpDevice_Infrastructure_t *>(deviceInfra);
+    QnnHtpDevice_PerfInfrastructure_t perfInfra = htpInfra->perfInfra;
+
+    // set RPC Control Latency
+    QnnHtpPerfInfrastructure_PowerConfig_t rpcControlLatency;            // refer QnnHtpPerfInfrastructure.h
+    memset(&rpcControlLatency, 0, sizeof(rpcControlLatency));
+    rpcControlLatency.option = QNN_HTP_PERF_INFRASTRUCTURE_POWER_CONFIGOPTION_RPC_CONTROL_LATENCY;
+    rpcControlLatency.rpcControlLatencyConfig = 100;         // use rpc control latency recommended 100 us, refer hexagon sdk
+    const QnnHtpPerfInfrastructure_PowerConfig_t *powerConfigs1[] = {&rpcControlLatency, NULL};
+
+    Qnn_ErrorHandle_t perfInfraErr = perfInfra.setPowerConfig(powerConfigId, powerConfigs1);  // set RPC latency config on power config id created
+    if (perfInfraErr != QNN_SUCCESS) {
+        LOGE("setPowerConfig failed");
+        return RWKV_ERROR_BACKEND | RWKV_ERROR_INIT;
+    }
+
+    // set RPC Polling
+    QnnHtpPerfInfrastructure_PowerConfig_t rpcPollingTime;   // refer QnnHtpPerfInfrastructure.h
+    memset(&rpcPollingTime, 0, sizeof(rpcPollingTime));
+    rpcPollingTime.option = QNN_HTP_PERF_INFRASTRUCTURE_POWER_CONFIGOPTION_RPC_POLLING_TIME;
+    rpcPollingTime.rpcPollingTimeConfig = 9999;     // use rpc polling time recommended 0-10000 us
+    const QnnHtpPerfInfrastructure_PowerConfig_t* powerConfigs2[] = {&rpcPollingTime, NULL};
+
+    perfInfraErr = perfInfra.setPowerConfig(powerConfigId, powerConfigs2); // set RPC polling config on power config id created
+    if (perfInfraErr != QNN_SUCCESS) {
+        LOGE("setPowerConfig failed");
+        return RWKV_ERROR_BACKEND | RWKV_ERROR_INIT;
+    }
+    return RWKV_SUCCESS;
+}
+
+int qnn_backend::init(void * extra) {
+    std::string path;
+    if (extra != nullptr) {
+        path = std::string((char *)extra);
+        LOGI("Using QNN Backend Path: %s\n", path.c_str());
+    } else {
+        path = "libQnnHtp.so";
+        LOGI("Using default QNN Backend Path: %s\n", path.c_str());
+    }
+
+    if (g_qnn_backend_context_ptr == nullptr) {
+        try {
+            g_qnn_backend_context_ptr = std::make_shared<qnn_backend_context>(path);
+        } catch (const std::exception& e) {
+            LOGE("Error creating QNN backend context: %s", e.what());
+            return RWKV_ERROR_BACKEND | RWKV_ERROR_INIT;
+        }
     }
 
     return RWKV_SUCCESS;
@@ -109,16 +408,7 @@ int qnn_backend::load_model(std::string model_path) {
         return RWKV_ERROR_MODEL | RWKV_ERROR_IO;
     }
 
-    if (qnnBackendPath.empty()) {
-        return RWKV_ERROR_BACKEND | RWKV_ERROR_INVALID_PARAMETERS;
-    }
-
-    bool is_context_cache =
-#ifdef WIN32
-        model_path.find(".dll") == std::string::npos;
-#else
-        model_path.find(".so") == std::string::npos;
-#endif
+    bool is_context_cache = model_path.find(".dll") == std::string::npos && model_path.find(".so") == std::string::npos;
 
     bool is_rmpack = model_path.find(".rmpack") != std::string::npos;
     if (is_rmpack) {
@@ -135,143 +425,10 @@ int qnn_backend::load_model(std::string model_path) {
 #endif
     }
 
-    // load QNN functions
-    auto qnnStatusCode = dynamicloadutil::getQnnFunctionPointers(
-        qnnBackendPath, model_path, &qnnFunctionPointers, &qnnBackendLibraryHandle, !is_context_cache, &qnnModelHandle);
-
-    if (dynamicloadutil::StatusCode::SUCCESS != qnnStatusCode) {
-        if (dynamicloadutil::StatusCode::FAIL_LOAD_BACKEND == qnnStatusCode) {
-            LOGE("Error initializing QNN Function Pointers: could not load backend: %s", qnnBackendPath.c_str());
-            return RWKV_ERROR_BACKEND | RWKV_ERROR_IO;
-        } else if (dynamicloadutil::StatusCode::FAIL_LOAD_MODEL == qnnStatusCode) {
-            LOGE("Error initializing QNN Function Pointers: could not load model:%s ", model_path.c_str());
-            return RWKV_ERROR_MODEL | RWKV_ERROR_IO;
-        } else {
-            LOGE("Error initializing QNN Function Pointers");
-            return RWKV_ERROR_BACKEND | RWKV_ERROR_INIT;
-        }
-    }
-
-    if (is_context_cache) {
-        std::string qnnSystemLibPath =
-#ifdef WIN32
-            qnnBackendPath.substr(0, qnnBackendPath.find("QnnHtp.dll")) + "QnnSystem.dll";
-#else
-            qnnBackendPath.substr(0, qnnBackendPath.find("libQnnHtp.so")) + "libQnnSystem.so";
-#endif
-
-        auto qnnSystemLibStatus = dynamicloadutil::getQnnSystemFunctionPointers(qnnSystemLibPath, &qnnFunctionPointers);
-        if (dynamicloadutil::StatusCode::SUCCESS != qnnSystemLibStatus) {
-            LOGE("Error initializing QNN System Function Pointers");
-            return RWKV_ERROR_BACKEND | RWKV_ERROR_INIT;
-        }
-    }
-
-    bool usingHtp = qnnBackendPath.find("Htp") != std::string::npos;
-    if (usingHtp) {
-        LOGI("Using QNN HTP Backend");
-    }
-    else {
-        LOGE("Do not use QNN CPU/GPU backends!");
-        return RWKV_ERROR_BACKEND | RWKV_ERROR_INIT;
-    }
-
-    // initialize QNN logging
-    auto logLevel = DEFAULT_QNN_LOGLEVEL;
-    if (QNN_SUCCESS !=
-        qnnFunctionPointers.qnnInterface.logCreate(logCallback, logLevel, &qnnLogHandle)) {
-      LOGW("Unable to initialize logging in the backend.");
-    }
-
-    // initialize QNN backend
-    auto qnnBackendStatus = qnnFunctionPointers.qnnInterface.backendCreate(
-        qnnLogHandle, nullptr, &qnnBackendHandle);
-    if (QNN_BACKEND_NO_ERROR != qnnBackendStatus) {
-      LOGE("Could not initialize backend due to error = %lu", qnnBackendStatus);
-      return RWKV_ERROR_BACKEND | RWKV_ERROR_INIT;
-    }
-    LOGI("Initialize Backend Returned Status = %lu", qnnBackendStatus);
-
-    if (nullptr != qnnFunctionPointers.qnnInterface.propertyHasCapability) {
-        auto qnnDevicePropertyStatus = qnnFunctionPointers.qnnInterface.propertyHasCapability(QNN_PROPERTY_GROUP_DEVICE);
-        if (QNN_PROPERTY_NOT_SUPPORTED == qnnDevicePropertyStatus) {
-            LOGW("Device property is not supported");
-        }
-        if (QNN_PROPERTY_ERROR_UNKNOWN_KEY == qnnDevicePropertyStatus) {
-            LOGE("Device property is not known to backend");
-            return RWKV_ERROR_BACKEND | RWKV_ERROR_INIT;
-        }
-
-        auto qnnCreateDeviceStatus = qnnFunctionPointers.qnnInterface.deviceCreate(qnnLogHandle, nullptr, &qnnDeviceHandle);
-        if (QNN_SUCCESS != qnnCreateDeviceStatus && QNN_DEVICE_ERROR_UNSUPPORTED_FEATURE != qnnCreateDeviceStatus) {
-            LOGE("Failed to create device");
-            return RWKV_ERROR_BACKEND | RWKV_ERROR_INIT;
-        }
-    }
-
-    qnnIOTensorUtils = new IOTensor(BufferAlloc::SHARED_BUFFER, &qnnFunctionPointers.qnnInterface);
-
-    if (usingHtp) {
-        if (RWKV_SUCCESS != qnn_create_power_config_id()) {
-            LOGE("Could not create HTP power config id");
-        } else {
-            if (RWKV_SUCCESS != qnn_set_rpc_latency_and_polling()) {
-                LOGE("Could not set HTP rpc latency and polling");
-            } else if (RWKV_SUCCESS != qnn_set_power_config()) {
-                LOGE("Could not set HTP power config");
-            }
-        }
-
-        soc_detect soc_detect;
-        soc_detect.detect_platform();
-        std::string htp_arch = soc_detect.get_htp_arch();
-        std::string custom_op_name = "libQnnRwkvWkvOpPackage.so";
-        if (htp_arch == "v79") {
-            custom_op_name = "libQnnRwkvWkvOpPackageV79.so";
-        } else if (htp_arch == "v75") {
-            custom_op_name = "libQnnRwkvWkvOpPackageV75.so";
-        } else if (htp_arch == "v73") {
-            custom_op_name = "libQnnRwkvWkvOpPackageV73.so";
-        } else if (htp_arch == "v69") {
-            custom_op_name = "libQnnRwkvWkvOpPackageV69.so";
-        } else if (htp_arch == "v68") {
-            custom_op_name = "libQnnRwkvWkvOpPackageV68.so";
-        }
-
-        std::vector<std::string> paths;
-        if (!extra_str.empty()) {
-            paths.push_back(extra_str);
-        } else {
-#ifndef _WIN32
-            const char* ldLibraryPath = getenv("LD_LIBRARY_PATH");
-            if (ldLibraryPath) {
-                std::string pathStr(ldLibraryPath);
-                std::stringstream ss(pathStr);
-                std::string dir;
-                while (std::getline(ss, dir, ':')) {
-                    paths.push_back(dir);
-                }
-            }
-#endif
-        }
-
-        for (auto dir : paths) {
-            std::string fullPath = dir + "/" + custom_op_name;
-            std::ifstream file(fullPath);
-            if (file.good()) {
-                LOGI("Found %s in path: %s", custom_op_name.c_str(), fullPath.c_str());
-                if (RWKV_SUCCESS != qnn_register_op_package(fullPath, "RwkvWkvOpPackageInterfaceProvider")) {
-                    LOGE("Op package registration failed");
-                }
-                break;
-            }
-        }
-    }
-
     if (is_context_cache || is_rmpack) {
-        if (nullptr == qnnFunctionPointers.qnnSystemInterface.systemContextCreate ||
-            nullptr == qnnFunctionPointers.qnnSystemInterface.systemContextGetBinaryInfo ||
-            nullptr == qnnFunctionPointers.qnnSystemInterface.systemContextFree) {
+        if (nullptr == g_qnn_backend_context_ptr->qnnFunctionPointers.qnnSystemInterface.systemContextCreate ||
+            nullptr == g_qnn_backend_context_ptr->qnnFunctionPointers.qnnSystemInterface.systemContextGetBinaryInfo ||
+            nullptr == g_qnn_backend_context_ptr->qnnFunctionPointers.qnnSystemInterface.systemContextFree) {
             LOGE("QNN System function pointers are not populated.");
             return RWKV_ERROR_BACKEND | RWKV_ERROR_INIT;
         }
@@ -384,7 +541,7 @@ int qnn_backend::load_model(std::string model_path) {
             }
             // inspect binary info
             QnnSystemContext_Handle_t sysCtxHandle{nullptr};
-            if (QNN_SUCCESS != qnnFunctionPointers.qnnSystemInterface.systemContextCreate(&sysCtxHandle)) {
+            if (QNN_SUCCESS != g_qnn_backend_context_ptr->qnnFunctionPointers.qnnSystemInterface.systemContextCreate(&sysCtxHandle)) {
                 LOGE("Could not create system handle.");
                 returnStatus = RWKV_ERROR_MODEL | RWKV_ERROR_IO;
             }
@@ -392,7 +549,7 @@ int qnn_backend::load_model(std::string model_path) {
             const QnnSystemContext_BinaryInfo_t* binaryInfo{nullptr};
             Qnn_ContextBinarySize_t binaryInfoSize{0};
             if (RWKV_SUCCESS == returnStatus &&
-                QNN_SUCCESS != qnnFunctionPointers.qnnSystemInterface.systemContextGetBinaryInfo(
+                QNN_SUCCESS != g_qnn_backend_context_ptr->qnnFunctionPointers.qnnSystemInterface.systemContextGetBinaryInfo(
                                     sysCtxHandle,
                                     static_cast<void*>(buffer[i].get()),
                                     bufferSizes[i],
@@ -408,11 +565,11 @@ int qnn_backend::load_model(std::string model_path) {
                 LOGE("Failed to copy metadata.");
                 returnStatus = RWKV_ERROR_MODEL;
             }
-            qnnFunctionPointers.qnnSystemInterface.systemContextFree(sysCtxHandle);
+            g_qnn_backend_context_ptr->qnnFunctionPointers.qnnSystemInterface.systemContextFree(sysCtxHandle);
             sysCtxHandle = nullptr;
 
             if (RWKV_SUCCESS == returnStatus &&
-                nullptr == qnnFunctionPointers.qnnInterface.contextCreateFromBinary) {
+                nullptr == g_qnn_backend_context_ptr->qnnFunctionPointers.qnnInterface.contextCreateFromBinary) {
                 LOGE("contextCreateFromBinaryFnHandle is nullptr.");
                 returnStatus = RWKV_ERROR_MODEL;
             }
@@ -453,9 +610,9 @@ int qnn_backend::load_model(std::string model_path) {
 
 
             if (RWKV_SUCCESS == returnStatus &&
-                qnnFunctionPointers.qnnInterface.contextCreateFromBinary(
-                    qnnBackendHandle,
-                    qnnDeviceHandle,
+                g_qnn_backend_context_ptr->qnnFunctionPointers.qnnInterface.contextCreateFromBinary(
+                    g_qnn_backend_context_ptr->qnnBackendHandle,
+                    g_qnn_backend_context_ptr->qnnDeviceHandle,
                     (const QnnContext_Config_t**)cfgs,
                     static_cast<void*>(buffer[i].get()),
                     bufferSizes[i],
@@ -475,13 +632,13 @@ int qnn_backend::load_model(std::string model_path) {
             isContextCreated = true;
             if (RWKV_SUCCESS == returnStatus) {
                 for (size_t graphIdx = 0; graphIdx < graphCounts[i]; graphIdx++) {
-                    if (nullptr == qnnFunctionPointers.qnnInterface.graphRetrieve) {
+                    if (nullptr == g_qnn_backend_context_ptr->qnnFunctionPointers.qnnInterface.graphRetrieve) {
                         LOGE("graphRetrieveFnHandle is nullptr.");
                         returnStatus = RWKV_ERROR_MODEL;
                         break;
                     }
                     if (QNN_SUCCESS !=
-                        qnnFunctionPointers.qnnInterface.graphRetrieve(
+                        g_qnn_backend_context_ptr->qnnFunctionPointers.qnnInterface.graphRetrieve(
                             qnnContextHandles[i], (*graphInfos[i])[graphIdx].graphName, &((*graphInfos[i])[graphIdx].graph))) {
                         LOGE("Unable to retrieve graph handle for graph Idx: %zu", graphIdx);
                         returnStatus = RWKV_ERROR_MODEL;
@@ -624,9 +781,9 @@ int qnn_backend::load_model(std::string model_path) {
     } else {
         // create context
         qnnContextHandles.resize(1);
-        if (QNN_CONTEXT_NO_ERROR != qnnFunctionPointers.qnnInterface.contextCreate(
-                    qnnBackendHandle,
-                    qnnDeviceHandle,
+        if (QNN_CONTEXT_NO_ERROR != g_qnn_backend_context_ptr->qnnFunctionPointers.qnnInterface.contextCreate(
+                    g_qnn_backend_context_ptr->qnnBackendHandle,
+                    g_qnn_backend_context_ptr->qnnDeviceHandle,
                     nullptr, // const QnnContext_Config_t**
                     &qnnContextHandles[0])) {
             LOGE("Could not create context");
@@ -659,9 +816,9 @@ int qnn_backend::load_model(std::string model_path) {
         }
 
         if (ModelError_t::MODEL_NO_ERROR !=
-            qnnFunctionPointers.composeGraphsFnHandle(
-                qnnBackendHandle,
-                qnnFunctionPointers.qnnInterface,
+            g_qnn_backend_context_ptr->qnnFunctionPointers.composeGraphsFnHandle(
+                g_qnn_backend_context_ptr->qnnBackendHandle,
+                g_qnn_backend_context_ptr->qnnFunctionPointers.qnnInterface,
                 qnnContextHandles[0],
                 (const GraphConfigInfo_t**)graphConfigsInfo,
                 graphConfigsInfoCount,
@@ -677,7 +834,7 @@ int qnn_backend::load_model(std::string model_path) {
         // finalize graphs
         for (size_t graphIdx = 0; graphIdx < qnnDecodeGraphsCount; graphIdx++) {
             if (QNN_GRAPH_NO_ERROR !=
-                qnnFunctionPointers.qnnInterface.graphFinalize(
+                g_qnn_backend_context_ptr->qnnFunctionPointers.qnnInterface.graphFinalize(
                     (*qnnDecodeGraphsInfo)[graphIdx].graph, nullptr, nullptr)) {
                 return RWKV_ERROR_MODEL;
             }
@@ -805,7 +962,7 @@ void qnn_backend::fill_quantized_tensor(float value, Qnn_Tensor_t *tensor) {
     for (int j = 0; j < QNN_TENSOR_GET_RANK(*tensor); j++) {
         dims.push_back(*(QNN_TENSOR_GET_DIMENSIONS(*tensor) + j));
     }
-    void *buffer = qnnIOTensorUtils->getBuffer(tensor);
+    void *buffer = g_qnn_backend_context_ptr->qnnIOTensorUtils->getBuffer(tensor);
     float fpzero = 0.0;
     auto dtype = QNN_TENSOR_GET_DATA_TYPE(*tensor);
     if (dtype == QNN_DATATYPE_UFIXED_POINT_8) {
@@ -831,7 +988,7 @@ void qnn_backend::fill_quantized_tensor(float value, Qnn_Tensor_t *tensor) {
 
 int qnn_backend::qnn_initialize_tensors() {
     if (!isTensorInitialized) {
-        qnnIOTensorUtils->initialize(qnnContextHandles[0]);
+        g_qnn_backend_context_ptr->qnnIOTensorUtils->initialize(qnnContextHandles[0]);
         if (qnnDecodeGraphsCount > 0) {
             decodeGraphsTensorNameToTensorPointer.resize(qnnDecodeGraphsCount);
             decodeGraphsTensorNameToSize.resize(qnnDecodeGraphsCount);
@@ -868,7 +1025,7 @@ int qnn_backend::qnn_initialize_tensors() {
                 // LOGI("Output Tensor %zu : %s Type: %d Size: %zu", i, tensorName.c_str(), QNN_TENSOR_GET_DATA_TYPE(graphInfo.outputTensors[i]), tensorDataSize);
             }
 
-            if (!qnnIOTensorUtils->setupOutputTensors(&outputTensors[graph_id], decodeGraphsTensorNameToTensorPointer[graph_id], graphInfo,
+            if (!g_qnn_backend_context_ptr->qnnIOTensorUtils->setupOutputTensors(&outputTensors[graph_id], decodeGraphsTensorNameToTensorPointer[graph_id], graphInfo,
                                           decodeGraphsTensorNameToSize[graph_id], qnnContextHandles[graph_id], false)) {
                 LOGE("Error in setting up Output Tensors");
                 return RWKV_ERROR_IO;
@@ -911,7 +1068,7 @@ int qnn_backend::qnn_initialize_tensors() {
                 }
             }
 
-            if (!qnnIOTensorUtils->setupInputWithSharedTensors(&inputTensors[graph_id], decodeGraphsTensorNameToTensorPointer[graph_id], graphInfo,
+            if (!g_qnn_backend_context_ptr->qnnIOTensorUtils->setupInputWithSharedTensors(&inputTensors[graph_id], decodeGraphsTensorNameToTensorPointer[graph_id], graphInfo,
                                         decodeGraphsTensorNameToSize[graph_id], qnnContextHandles[graph_id], sharedTensorMap)) {
                 LOGE("Error in setting up Input Tensors");
                 return RWKV_ERROR_IO;
@@ -984,13 +1141,13 @@ int qnn_backend::qnn_initialize_tensors() {
                     }
                 }
 
-                if (!qnnIOTensorUtils->setupOutputWithSharedTensors(&outputTensorsPrefill[graph_id], prefillGraphsTensorNameToTensorPointer[graph_id], graphInfo,
+                if (!g_qnn_backend_context_ptr->qnnIOTensorUtils->setupOutputWithSharedTensors(&outputTensorsPrefill[graph_id], prefillGraphsTensorNameToTensorPointer[graph_id], graphInfo,
                                                 prefillGraphsTensorNameToSize[graph_id], qnnContextHandles[graph_id], sharedTensorMapPrefill)) {
                     LOGE("Error in setting up Output Tensors");
                     return RWKV_ERROR_IO;
                 }
 
-                if (!qnnIOTensorUtils->setupInputWithSharedTensors(&inputTensorsPrefill[graph_id], prefillGraphsTensorNameToTensorPointer[graph_id], graphInfo,
+                if (!g_qnn_backend_context_ptr->qnnIOTensorUtils->setupInputWithSharedTensors(&inputTensorsPrefill[graph_id], prefillGraphsTensorNameToTensorPointer[graph_id], graphInfo,
                                                 prefillGraphsTensorNameToSize[graph_id], qnnContextHandles[graph_id], sharedTensorMapPrefill)) {
                     LOGE("Error in setting up Input Tensors");
                     return RWKV_ERROR_IO;
@@ -1043,7 +1200,7 @@ int qnn_backend::qnn_initialize_tensors() {
                 }
 
                 if (qnnDecodeGraphsCount == 0) {
-                    if (!qnnIOTensorUtils->setupOutputTensors(&outputTensorsEmbd[graph_id], embdGraphsTensorNameToTensorPointer[graph_id], graphInfo,
+                    if (!g_qnn_backend_context_ptr->qnnIOTensorUtils->setupOutputTensors(&outputTensorsEmbd[graph_id], embdGraphsTensorNameToTensorPointer[graph_id], graphInfo,
                                             embdGraphsTensorNameToSize[graph_id], qnnContextHandles[graph_id], false)) {
                         LOGE("Error in setting up Output Tensors");
                         return RWKV_ERROR_IO;
@@ -1089,14 +1246,14 @@ int qnn_backend::qnn_initialize_tensors() {
                 }
 
                 if (qnnDecodeGraphsCount > 0) {
-                    if (!qnnIOTensorUtils->setupOutputWithSharedTensors(&outputTensorsEmbd[graph_id], embdGraphsTensorNameToTensorPointer[graph_id], graphInfo,
+                    if (!g_qnn_backend_context_ptr->qnnIOTensorUtils->setupOutputWithSharedTensors(&outputTensorsEmbd[graph_id], embdGraphsTensorNameToTensorPointer[graph_id], graphInfo,
                                                     embdGraphsTensorNameToSize[graph_id], qnnContextHandles[graph_id], sharedTensorMapEmbd)) {
                         LOGE("Error in setting up Output Tensors");
                         return RWKV_ERROR_IO;
                     }
                 }
 
-                if (!qnnIOTensorUtils->setupInputWithSharedTensors(&inputTensorsEmbd[graph_id], embdGraphsTensorNameToTensorPointer[graph_id], graphInfo,
+                if (!g_qnn_backend_context_ptr->qnnIOTensorUtils->setupInputWithSharedTensors(&inputTensorsEmbd[graph_id], embdGraphsTensorNameToTensorPointer[graph_id], graphInfo,
                                                 embdGraphsTensorNameToSize[graph_id], qnnContextHandles[graph_id], sharedTensorMapEmbd)) {
                     LOGE("Error in setting up Input Tensors");
                     return RWKV_ERROR_IO;
@@ -1169,13 +1326,13 @@ int qnn_backend::qnn_initialize_tensors() {
                     }
                 }
 
-                if (!qnnIOTensorUtils->setupOutputWithSharedTensors(&outputTensorsEmbdPrefill[graph_id], embdPrefillGraphsTensorNameToTensorPointer[graph_id], graphInfo,
+                if (!g_qnn_backend_context_ptr->qnnIOTensorUtils->setupOutputWithSharedTensors(&outputTensorsEmbdPrefill[graph_id], embdPrefillGraphsTensorNameToTensorPointer[graph_id], graphInfo,
                                                 embdPrefillGraphsTensorNameToSize[graph_id], qnnContextHandles[graph_id], sharedTensorMapEmbdPrefill)) {
                     LOGE("Error in setting up Output Tensors");
                     return RWKV_ERROR_IO;
                 }
 
-                if (!qnnIOTensorUtils->setupInputWithSharedTensors(&inputTensorsEmbdPrefill[graph_id], embdPrefillGraphsTensorNameToTensorPointer[graph_id], graphInfo,
+                if (!g_qnn_backend_context_ptr->qnnIOTensorUtils->setupInputWithSharedTensors(&inputTensorsEmbdPrefill[graph_id], embdPrefillGraphsTensorNameToTensorPointer[graph_id], graphInfo,
                                                 embdPrefillGraphsTensorNameToSize[graph_id], qnnContextHandles[graph_id], sharedTensorMapEmbdPrefill)) {
                     LOGE("Error in setting up Input Tensors");
                     return RWKV_ERROR_IO;
@@ -1219,7 +1376,7 @@ int qnn_backend::copy_float_to_qnn_tensor(Qnn_Tensor_t *qnn_tensor, const float 
         return RWKV_ERROR_IO;
     }
 
-    void *qnn_buffer = qnnIOTensorUtils->getBuffer(qnn_tensor);
+    void *qnn_buffer = g_qnn_backend_context_ptr->qnnIOTensorUtils->getBuffer(qnn_tensor);
     if (QNN_TENSOR_GET_DATA_TYPE(qnn_tensor) == QNN_DATATYPE_FLOAT_32) {
         memcpy(qnn_buffer, buffer, element_count * sizeof(float));
     } else if (QNN_TENSOR_GET_DATA_TYPE(qnn_tensor) == QNN_DATATYPE_FLOAT_16) {
@@ -1252,7 +1409,7 @@ int qnn_backend::copy_qnn_tensor_to_float(Qnn_Tensor_t *qnn_tensor, float *buffe
         return RWKV_ERROR_IO;
     }
 
-    void *qnn_buffer = qnnIOTensorUtils->getBuffer(qnn_tensor);
+    void *qnn_buffer = g_qnn_backend_context_ptr->qnnIOTensorUtils->getBuffer(qnn_tensor);
     if (qnn_buffer == nullptr) {
         LOGE("%s: Failed to get buffer for tensor %s", __func__, QNN_TENSOR_GET_NAME(qnn_tensor));
         return RWKV_ERROR_IO;
@@ -1281,7 +1438,7 @@ int qnn_backend::execute_graph(GraphInfo_t** graphsInfo, int graphsCount, Qnn_Te
     for (int graph_id = 0; graph_id < graphsCount; graph_id++) {
         auto graphInfo     = (*graphsInfo)[graph_id];
         auto executeStatus =
-            qnnFunctionPointers.qnnInterface.graphExecute(graphInfo.graph,
+            g_qnn_backend_context_ptr->qnnFunctionPointers.qnnInterface.graphExecute(graphInfo.graph,
                                                             inputTensors[graph_id],
                                                             graphInfo.numInputTensors,
                                                             outputTensors[graph_id],
@@ -1382,7 +1539,7 @@ int qnn_backend::eval(int id, float *& logits) {
         }
 
         // assume that the external_embeddings has elementsize = 2
-        void *buffer = qnnIOTensorUtils->getBuffer(tokenInputTensorEmbd);
+        void *buffer = g_qnn_backend_context_ptr->qnnIOTensorUtils->getBuffer(tokenInputTensorEmbd);
         if (buffer == nullptr) {
             LOGE("Failed to get tokenInputTensorEmbd");
             return RWKV_ERROR_IO;
@@ -1394,7 +1551,7 @@ int qnn_backend::eval(int id, float *& logits) {
             return RWKV_ERROR_EVAL;
         }
     } else {
-        int *token_input = (int*)qnnIOTensorUtils->getBuffer(tokenInputTensor);
+        int *token_input = (int*)g_qnn_backend_context_ptr->qnnIOTensorUtils->getBuffer(tokenInputTensor);
         if (token_input == nullptr) {
             LOGE("Failed to get tokenInputTensor");
             return RWKV_ERROR_IO;
@@ -1425,7 +1582,7 @@ int qnn_backend::eval(std::vector<int> ids, float *& logits, bool skip_logits_co
 
         int idx = 0;
         for (; idx + embdPrefillSequenceLength <= ids.size(); idx += embdPrefillSequenceLength) {
-            uint16_t *buffer = (uint16_t*)qnnIOTensorUtils->getBuffer(tokenInputTensorEmbdPrefill);
+            uint16_t *buffer = (uint16_t*)g_qnn_backend_context_ptr->qnnIOTensorUtils->getBuffer(tokenInputTensorEmbdPrefill);
             if (buffer == nullptr) {
                 LOGE("Failed to get tokenInputTensorEmbdPrefill");
                 return RWKV_ERROR_IO;
@@ -1441,7 +1598,7 @@ int qnn_backend::eval(std::vector<int> ids, float *& logits, bool skip_logits_co
         }
 
         for (; idx < ids.size(); idx++) {
-            uint16_t *buffer = (uint16_t*)qnnIOTensorUtils->getBuffer(tokenInputTensorEmbd);
+            uint16_t *buffer = (uint16_t*)g_qnn_backend_context_ptr->qnnIOTensorUtils->getBuffer(tokenInputTensorEmbd);
             if (buffer == nullptr) {
                 LOGE("Failed to get tokenInputTensorEmbd");
                 return RWKV_ERROR_IO;
@@ -1461,7 +1618,7 @@ int qnn_backend::eval(std::vector<int> ids, float *& logits, bool skip_logits_co
                 }
             }
         } else {
-            int *token_input = (int*)qnnIOTensorUtils->getBuffer(tokenInputTensorPrefill);
+            int *token_input = (int*)g_qnn_backend_context_ptr->qnnIOTensorUtils->getBuffer(tokenInputTensorPrefill);
             if (token_input == nullptr) {
                 LOGE("Failed to get tokenInputTensorPrefill");
                 return RWKV_ERROR_IO;
@@ -1490,7 +1647,7 @@ int qnn_backend::eval(std::vector<int> ids, float *& logits, bool skip_logits_co
 
             // LOGD("Prefilling tails using decode mode from %d to %d", idx, ids.size());
             for (; idx < ids.size(); idx++) {
-                token_input = (int*)qnnIOTensorUtils->getBuffer(tokenInputTensor);
+                token_input = (int*)g_qnn_backend_context_ptr->qnnIOTensorUtils->getBuffer(tokenInputTensor);
                 if (token_input == nullptr) {
                     LOGE("Failed to get tokenInputTensor");
                     return RWKV_ERROR_IO;
@@ -1555,7 +1712,7 @@ int qnn_backend::zero_state() {
         for (int j = 0; j < QNN_TENSOR_GET_RANK(qnntensor); j++) {
             element_count *= *(QNN_TENSOR_GET_DIMENSIONS(qnntensor) + j);
         }
-        void *buffer = qnnIOTensorUtils->getBuffer(qnntensor);
+        void *buffer = g_qnn_backend_context_ptr->qnnIOTensorUtils->getBuffer(qnntensor);
         if (buffer == nullptr) {
             LOGE("%s: Failed to get buffer for tensor %s", __func__, tensorName.c_str());
             return RWKV_ERROR_IO;
@@ -1574,12 +1731,12 @@ int qnn_backend::get_state(std::any &state) {
     auto new_state = std::vector<std::vector<uint8_t>>();
     for (int i = 0; i < 3 * n_layers; i++) {
         Qnn_Tensor_t *tensor = (Qnn_Tensor_t*)stateTensorsNameToTensorPointer["state" + std::to_string(i) + "_out"];
-        uint8_t *buffer = (uint8_t*)qnnIOTensorUtils->getBuffer(tensor);
+        uint8_t *buffer = (uint8_t*)g_qnn_backend_context_ptr->qnnIOTensorUtils->getBuffer(tensor);
         if (buffer == nullptr) {
             LOGE("%s: Failed to get buffer for state tensor %i", __func__, i);
             return RWKV_ERROR_IO;
         }
-        new_state.push_back(std::vector<uint8_t>(buffer, buffer + qnnIOTensorUtils->getBufferSize(tensor)));
+        new_state.push_back(std::vector<uint8_t>(buffer, buffer + g_qnn_backend_context_ptr->qnnIOTensorUtils->getBufferSize(tensor)));
     }
     state = new_state;
     return RWKV_SUCCESS;
@@ -1590,7 +1747,7 @@ int qnn_backend::set_state(std::any state) {
     auto new_state = std::any_cast<std::vector<std::vector<uint8_t>>>(state);
     for (int i = 0; i < 3 * n_layers; i++) {
         Qnn_Tensor_t *tensor = (Qnn_Tensor_t*)stateTensorsNameToTensorPointer["state" + std::to_string(i) + "_out"];
-        void *buffer = qnnIOTensorUtils->getBuffer(tensor);
+        void *buffer = g_qnn_backend_context_ptr->qnnIOTensorUtils->getBuffer(tensor);
         if (buffer == nullptr) {
             LOGE("%s: Failed to get buffer for state tensor %i", __func__, i);
             return RWKV_ERROR_IO;
@@ -1614,7 +1771,7 @@ int qnn_backend::load_raw_states(std::vector<std::vector<half_float::half>> stat
     zero_state();
     for (int i = 0; i < n_layers; i++) {
         Qnn_Tensor_t *tensor = (Qnn_Tensor_t*)stateTensorsNameToTensorPointer["state" + std::to_string(i * 3 + 1) + "_out"];
-        void *buffer = qnnIOTensorUtils->getBuffer(tensor);
+        void *buffer = g_qnn_backend_context_ptr->qnnIOTensorUtils->getBuffer(tensor);
         if (buffer == nullptr) {
             LOGE("%s: Failed to get buffer for state tensor %i", __func__, i);
             return RWKV_ERROR_IO;
@@ -1633,8 +1790,8 @@ int qnn_backend::release_model() {
     if (qnnDecodeGraphsCount > 0) {
         for (int i = 0; i < qnnDecodeGraphsCount; i++) {
             auto graphInfo     = (*qnnDecodeGraphsInfo)[i];
-            qnnIOTensorUtils->tearDownTensors(inputTensors[i], graphInfo.numInputTensors);
-            qnnIOTensorUtils->tearDownTensors(outputTensors[i], graphInfo.numOutputTensors);
+            g_qnn_backend_context_ptr->qnnIOTensorUtils->tearDownTensors(inputTensors[i], graphInfo.numInputTensors);
+            g_qnn_backend_context_ptr->qnnIOTensorUtils->tearDownTensors(outputTensors[i], graphInfo.numOutputTensors);
             inputTensors[i]  = nullptr;
             outputTensors[i] = nullptr;
         }
@@ -1646,8 +1803,8 @@ int qnn_backend::release_model() {
     if (qnnPrefillGraphsCount > 0) {
         for (int i = 0; i < qnnPrefillGraphsCount; i++) {
             auto graphInfo     = (*qnnPrefillGraphsInfo)[i];
-            qnnIOTensorUtils->tearDownTensors(inputTensorsPrefill[i], graphInfo.numInputTensors);
-            qnnIOTensorUtils->tearDownTensors(outputTensorsPrefill[i], graphInfo.numOutputTensors);
+            g_qnn_backend_context_ptr->qnnIOTensorUtils->tearDownTensors(inputTensorsPrefill[i], graphInfo.numInputTensors);
+            g_qnn_backend_context_ptr->qnnIOTensorUtils->tearDownTensors(outputTensorsPrefill[i], graphInfo.numOutputTensors);
             inputTensorsPrefill[i]  = nullptr;
             outputTensorsPrefill[i] = nullptr;
         }
@@ -1659,8 +1816,8 @@ int qnn_backend::release_model() {
     if (qnnEmbdGraphsCount > 0) {
         for (int i = 0; i < qnnEmbdGraphsCount; i++) {
             auto graphInfo     = (*qnnEmbdGraphsInfo)[i];
-            qnnIOTensorUtils->tearDownTensors(inputTensorsEmbd[i], graphInfo.numInputTensors);
-            qnnIOTensorUtils->tearDownTensors(outputTensorsEmbd[i], graphInfo.numOutputTensors);
+            g_qnn_backend_context_ptr->qnnIOTensorUtils->tearDownTensors(inputTensorsEmbd[i], graphInfo.numInputTensors);
+            g_qnn_backend_context_ptr->qnnIOTensorUtils->tearDownTensors(outputTensorsEmbd[i], graphInfo.numOutputTensors);
             inputTensorsEmbd[i]  = nullptr;
             outputTensorsEmbd[i] = nullptr;
         }
@@ -1671,27 +1828,27 @@ int qnn_backend::release_model() {
 
     for (int i = 0; i < qnnContextHandles.size(); i++) {
         if (QNN_CONTEXT_NO_ERROR !=
-            qnnFunctionPointers.qnnInterface.contextFree(qnnContextHandles[i], nullptr)) {
+            g_qnn_backend_context_ptr->qnnFunctionPointers.qnnInterface.contextFree(qnnContextHandles[i], nullptr)) {
             LOGE("Could not free context");
         }
     }
 
-    qnn_destory_power_config_id();
+    g_qnn_backend_context_ptr->qnn_destory_power_config_id();
 
-    if (nullptr != qnnFunctionPointers.qnnInterface.propertyHasCapability) {
-        auto qnnDevicePropertyStatus = qnnFunctionPointers.qnnInterface.propertyHasCapability(QNN_PROPERTY_GROUP_DEVICE);
+    if (nullptr != g_qnn_backend_context_ptr->qnnFunctionPointers.qnnInterface.propertyHasCapability) {
+        auto qnnDevicePropertyStatus = g_qnn_backend_context_ptr->qnnFunctionPointers.qnnInterface.propertyHasCapability(QNN_PROPERTY_GROUP_DEVICE);
         if (QNN_PROPERTY_NOT_SUPPORTED == qnnDevicePropertyStatus) {
             LOGW("Device property is not supported");
         }
 
-        auto qnnStatus = qnnFunctionPointers.qnnInterface.deviceFree(qnnDeviceHandle);
+        auto qnnStatus = g_qnn_backend_context_ptr->qnnFunctionPointers.qnnInterface.deviceFree(g_qnn_backend_context_ptr->qnnDeviceHandle);
         if (QNN_SUCCESS != qnnStatus && QNN_DEVICE_ERROR_UNSUPPORTED_FEATURE != qnnStatus) {
             LOGE("Failed to free device");
         }
     }
 
-    if (qnnBackendLibraryHandle)
-        pal::dynamicloading::dlClose(qnnBackendLibraryHandle);
+    if (g_qnn_backend_context_ptr->qnnBackendLibraryHandle)
+        pal::dynamicloading::dlClose(g_qnn_backend_context_ptr->qnnBackendLibraryHandle);
 
     if (qnnModelHandle)
         pal::dynamicloading::dlClose(qnnModelHandle);
@@ -1701,14 +1858,14 @@ int qnn_backend::release_model() {
     }
     delete graphConfigsInfo;
 
-    if ((nullptr != qnnBackendHandle && nullptr != qnnFunctionPointers.qnnInterface.backendFree) &&
-        QNN_BACKEND_NO_ERROR != qnnFunctionPointers.qnnInterface.backendFree(qnnBackendHandle)) {
+    if ((nullptr != g_qnn_backend_context_ptr->qnnBackendHandle && nullptr != g_qnn_backend_context_ptr->qnnFunctionPointers.qnnInterface.backendFree) &&
+        QNN_BACKEND_NO_ERROR != g_qnn_backend_context_ptr->qnnFunctionPointers.qnnInterface.backendFree(g_qnn_backend_context_ptr->qnnBackendHandle)) {
         LOGE("Could not terminate QNN backend");
     }
-    qnnBackendHandle = nullptr;
+    g_qnn_backend_context_ptr->qnnBackendHandle = nullptr;
 
-    if (nullptr != qnnFunctionPointers.qnnInterface.logFree && nullptr != qnnLogHandle) {
-        if (QNN_SUCCESS != qnnFunctionPointers.qnnInterface.logFree(qnnLogHandle)) {
+    if (nullptr != g_qnn_backend_context_ptr->qnnFunctionPointers.qnnInterface.logFree && nullptr != g_qnn_backend_context_ptr->qnnLogHandle) {
+        if (QNN_SUCCESS != g_qnn_backend_context_ptr->qnnFunctionPointers.qnnInterface.logFree(g_qnn_backend_context_ptr->qnnLogHandle)) {
             LOGW("Unable to terminate logging in the backend.");
         }
     }
@@ -1717,160 +1874,6 @@ int qnn_backend::release_model() {
 }
 
 int qnn_backend::release() {
-    return RWKV_SUCCESS;
-}
-
-int qnn_backend::qnn_register_op_package(std::string package_path, std::string interface_provider) {
-    if (nullptr == qnnFunctionPointers.qnnInterface.backendRegisterOpPackage) {
-        LOGE("backendRegisterOpPackageFnHandle is nullptr.");
-        return RWKV_ERROR_UNSUPPORTED;
-    }
-    if (QNN_BACKEND_NO_ERROR != qnnFunctionPointers.qnnInterface.backendRegisterOpPackage(
-                qnnBackendHandle,
-                package_path.c_str(),
-                interface_provider.c_str(),
-                nullptr)) {
-        LOGE("Could not register Op Package: %s and interface provider: %s",
-            package_path.c_str(),
-            interface_provider.c_str());
-        return RWKV_ERROR_BACKEND | RWKV_ERROR_INIT;
-    }
-    LOGI("Registered Op Package: %s and interface provider: %s",
-        package_path.c_str(),
-        interface_provider.c_str()
-    );
-    return RWKV_SUCCESS;
-}
-
-int qnn_backend::qnn_create_power_config_id() {
-    QnnDevice_Infrastructure_t deviceInfra = nullptr;
-    Qnn_ErrorHandle_t devErr = qnnFunctionPointers.qnnInterface.deviceGetInfrastructure(&deviceInfra);
-    if (devErr != QNN_SUCCESS) {
-        LOGE("deviceGetInfrastructure error");
-        return RWKV_ERROR_BACKEND | RWKV_ERROR_INIT;
-    }
-    QnnHtpDevice_Infrastructure_t *htpInfra = static_cast<QnnHtpDevice_Infrastructure_t *>(deviceInfra);
-    QnnHtpDevice_PerfInfrastructure_t perfInfra = htpInfra->perfInfra;
-    Qnn_ErrorHandle_t perfInfraErr = perfInfra.createPowerConfigId(deviceId, coreId, &powerConfigId);
-    if (perfInfraErr != QNN_SUCCESS) {
-      LOGE("createPowerConfigId failed");
-      return RWKV_ERROR_BACKEND | RWKV_ERROR_INIT;
-    }
-    return RWKV_SUCCESS;
-}
-
-int qnn_backend::qnn_destory_power_config_id() {
-    QnnDevice_Infrastructure_t deviceInfra = nullptr;
-    Qnn_ErrorHandle_t devErr = qnnFunctionPointers.qnnInterface.deviceGetInfrastructure(&deviceInfra);
-    if (devErr != QNN_SUCCESS) {
-        LOGE("deviceGetInfrastructure error");
-        return RWKV_ERROR_BACKEND | RWKV_ERROR_RELEASE;
-    }
-    QnnHtpDevice_Infrastructure_t *htpInfra = static_cast<QnnHtpDevice_Infrastructure_t *>(deviceInfra);
-    QnnHtpDevice_PerfInfrastructure_t perfInfra = htpInfra->perfInfra;
-
-    Qnn_ErrorHandle_t perfInfraErr = perfInfra.destroyPowerConfigId(powerConfigId);
-    if (perfInfraErr != QNN_SUCCESS) {
-        LOGE("destroyPowerConfigId failed");
-        return RWKV_ERROR_BACKEND | RWKV_ERROR_RELEASE;
-    }
-    return RWKV_SUCCESS;
-}
-
-int qnn_backend::qnn_set_power_config() {
-    QnnDevice_Infrastructure_t deviceInfra = nullptr;
-    Qnn_ErrorHandle_t devErr = qnnFunctionPointers.qnnInterface.deviceGetInfrastructure(&deviceInfra);
-    if (devErr != QNN_SUCCESS) {
-        LOGE("device error");
-        return RWKV_ERROR_BACKEND | RWKV_ERROR_INIT;
-    }
-    QnnHtpDevice_Infrastructure_t *htpInfra = static_cast<QnnHtpDevice_Infrastructure_t *>(deviceInfra);
-    QnnHtpDevice_PerfInfrastructure_t perfInfra = htpInfra->perfInfra;
-
-    QnnHtpPerfInfrastructure_PowerConfig_t powerConfig;
-    memset(&powerConfig, 0, sizeof(powerConfig));
-    powerConfig.option                     = QNN_HTP_PERF_INFRASTRUCTURE_POWER_CONFIGOPTION_DCVS_V3;
-    powerConfig.dcvsV3Config.dcvsEnable    = 0; //True to enable Dcvs, False to disbale
-    powerConfig.dcvsV3Config.setDcvsEnable = 1;
-    powerConfig.dcvsV3Config.contextId     = powerConfigId;  //use the power config id created
-
-    // refer QnnHtpPerfInfrastructure.h
-    powerConfig.dcvsV3Config.powerMode       = QNN_HTP_PERF_INFRASTRUCTURE_POWERMODE_PERFORMANCE_MODE;
-    powerConfig.dcvsV3Config.setSleepLatency = 1; //True to consider Latency parameter otherwise False
-    powerConfig.dcvsV3Config.setBusParams    = 1; //True to consider Bus parameter otherwise False
-    powerConfig.dcvsV3Config.setCoreParams   = 1; //True to consider Core parameter otherwise False
-    powerConfig.dcvsV3Config.sleepDisable    = 1; //True to disable sleep, False to re-enable sleep
-    powerConfig.dcvsV3Config.setSleepDisable = 1; //True to consider sleep disable/enable parameter otherwise False
-
-    //Set Sleep latency parameter
-    powerConfig.dcvsV3Config.sleepLatency    =  40; // set dsp sleep latency ranges 10-65535 micro sec, refer hexagon sdk
-
-    //set Bus Clock Parameters (refer QnnHtpPerfInfrastructure.h)
-    powerConfig.dcvsV3Config.busVoltageCornerMin     = DCVS_VOLTAGE_VCORNER_MAX_VOLTAGE_CORNER;
-    powerConfig.dcvsV3Config.busVoltageCornerTarget  = DCVS_VOLTAGE_VCORNER_MAX_VOLTAGE_CORNER;
-    powerConfig.dcvsV3Config.busVoltageCornerMax     = DCVS_VOLTAGE_VCORNER_MAX_VOLTAGE_CORNER;
-
-    //set Core Clock Parameters (refer QnnHtpPerfInfrastructure.h)
-    powerConfig.dcvsV3Config.coreVoltageCornerMin    = DCVS_VOLTAGE_VCORNER_MAX_VOLTAGE_CORNER;
-    powerConfig.dcvsV3Config.coreVoltageCornerTarget = DCVS_VOLTAGE_VCORNER_MAX_VOLTAGE_CORNER;
-    powerConfig.dcvsV3Config.coreVoltageCornerMax    = DCVS_VOLTAGE_VCORNER_MAX_VOLTAGE_CORNER;
-
-    QnnHtpPerfInfrastructure_PowerConfig_t powerConfigHMX;
-    memset(&powerConfigHMX, 0, sizeof(powerConfigHMX));
-    powerConfigHMX.option                     = QNN_HTP_PERF_INFRASTRUCTURE_POWER_CONFIGOPTION_HMX_V2;
-    powerConfigHMX.hmxV2Config.hmxPickDefault = 0;
-    powerConfigHMX.hmxV2Config.hmxPerfMode    = QNN_HTP_PERF_INFRASTRUCTURE_CLK_PERF_HIGH;
-
-    powerConfigHMX.hmxV2Config.hmxVoltageCornerMin    = DCVS_EXP_VCORNER_TUR;
-    powerConfigHMX.hmxV2Config.hmxVoltageCornerTarget = DCVS_EXP_VCORNER_TUR;
-    powerConfigHMX.hmxV2Config.hmxVoltageCornerMax    = DCVS_EXP_VCORNER_TUR;
-
-    // Set power config with different performance parameters
-    const QnnHtpPerfInfrastructure_PowerConfig_t *powerConfigs[] = {&powerConfig, &powerConfigHMX, NULL};
-
-    Qnn_ErrorHandle_t perfInfraErr = perfInfra.setPowerConfig(powerConfigId, powerConfigs);
-    if (perfInfraErr != QNN_SUCCESS) {
-        const QnnHtpPerfInfrastructure_PowerConfig_t *powerConfigsWithoutHMX[] = {&powerConfig, NULL};
-        perfInfraErr = perfInfra.setPowerConfig(powerConfigId, powerConfigsWithoutHMX);
-    }
-    return RWKV_SUCCESS;
-}
-
-int qnn_backend::qnn_set_rpc_latency_and_polling() {
-    QnnDevice_Infrastructure_t deviceInfra = nullptr;
-    Qnn_ErrorHandle_t devErr = qnnFunctionPointers.qnnInterface.deviceGetInfrastructure(&deviceInfra);
-    if (devErr != QNN_SUCCESS) {
-      LOGE("device error");
-      return RWKV_ERROR_BACKEND | RWKV_ERROR_INIT;
-    }
-    QnnHtpDevice_Infrastructure_t *htpInfra = static_cast<QnnHtpDevice_Infrastructure_t *>(deviceInfra);
-    QnnHtpDevice_PerfInfrastructure_t perfInfra = htpInfra->perfInfra;
-
-    // set RPC Control Latency
-    QnnHtpPerfInfrastructure_PowerConfig_t rpcControlLatency;            // refer QnnHtpPerfInfrastructure.h
-    memset(&rpcControlLatency, 0, sizeof(rpcControlLatency));
-    rpcControlLatency.option = QNN_HTP_PERF_INFRASTRUCTURE_POWER_CONFIGOPTION_RPC_CONTROL_LATENCY;
-    rpcControlLatency.rpcControlLatencyConfig = 100;         // use rpc control latency recommended 100 us, refer hexagon sdk
-    const QnnHtpPerfInfrastructure_PowerConfig_t *powerConfigs1[] = {&rpcControlLatency, NULL};
-
-    Qnn_ErrorHandle_t perfInfraErr = perfInfra.setPowerConfig(powerConfigId, powerConfigs1);  // set RPC latency config on power config id created
-    if (perfInfraErr != QNN_SUCCESS) {
-        LOGE("setPowerConfig failed");
-        return RWKV_ERROR_BACKEND | RWKV_ERROR_INIT;
-    }
-
-    // set RPC Polling
-    QnnHtpPerfInfrastructure_PowerConfig_t rpcPollingTime;   // refer QnnHtpPerfInfrastructure.h
-    memset(&rpcPollingTime, 0, sizeof(rpcPollingTime));
-    rpcPollingTime.option = QNN_HTP_PERF_INFRASTRUCTURE_POWER_CONFIGOPTION_RPC_POLLING_TIME;
-    rpcPollingTime.rpcPollingTimeConfig = 9999;     // use rpc polling time recommended 0-10000 us
-    const QnnHtpPerfInfrastructure_PowerConfig_t* powerConfigs2[] = {&rpcPollingTime, NULL};
-
-    perfInfraErr = perfInfra.setPowerConfig(powerConfigId, powerConfigs2); // set RPC polling config on power config id created
-    if (perfInfraErr != QNN_SUCCESS) {
-        LOGE("setPowerConfig failed");
-        return RWKV_ERROR_BACKEND | RWKV_ERROR_INIT;
-    }
     return RWKV_SUCCESS;
 }
 

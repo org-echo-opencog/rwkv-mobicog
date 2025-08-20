@@ -12,6 +12,35 @@
 
 namespace rwkvmobile {
 
+class qnn_backend_context {
+public:
+    qnn_backend_context(std::string qnnBackendPath);
+
+    ~qnn_backend_context() = default;
+
+    int qnn_create_power_config_id();
+    int qnn_destory_power_config_id();
+    int qnn_set_power_config();
+    int qnn_register_op_package(std::string package_path, std::string interface_provider);
+    int qnn_set_rpc_latency_and_polling();
+
+    uint32_t powerConfigId = 0;
+    uint32_t deviceId = 0;
+    uint32_t coreId = 0;
+
+    std::string qnnBackendPath;
+    std::string qnnBackendBasePath;
+    void *qnnBackendLibraryHandle = nullptr;
+
+    qnn::tools::rwkv_app::QnnFunctionPointers qnnFunctionPointers;
+
+    Qnn_LogHandle_t qnnLogHandle = nullptr;
+    Qnn_BackendHandle_t qnnBackendHandle = nullptr;
+    Qnn_DeviceHandle_t qnnDeviceHandle = nullptr;
+
+    IOTensor* qnnIOTensorUtils = nullptr;
+};
+
 class qnn_backend : public execution_provider {
 public:
     ~qnn_backend() {
@@ -53,13 +82,7 @@ public:
     int post_graph_execute(float *& logits);
 private:
     double prefill_speed = -1;
-    std::string qnnBackendPath;
-    void *qnnBackendLibraryHandle = nullptr;
     void *qnnModelHandle = nullptr;
-
-    uint32_t powerConfigId;
-    uint32_t deviceId = 0;
-    uint32_t coreId = 0;
 
     bool isContextCreated = false;
     bool isTensorInitialized = false;
@@ -67,11 +90,6 @@ private:
     int prefillSequenceLength = 0;
     int embdPrefillSequenceLength = 0;
 
-    qnn::tools::rwkv_app::QnnFunctionPointers qnnFunctionPointers;
-
-    Qnn_LogHandle_t qnnLogHandle = nullptr;
-    Qnn_BackendHandle_t qnnBackendHandle = nullptr;
-    Qnn_DeviceHandle_t qnnDeviceHandle = nullptr;
     std::vector<Qnn_ContextHandle_t> qnnContextHandles;
 
     uint32_t qnnDecodeGraphsCount = 0;
@@ -109,8 +127,6 @@ private:
 
     size_t logitsOutputTensorSize = 0;
 
-    IOTensor* qnnIOTensorUtils = nullptr;
-
     std::vector<std::unordered_map<std::string, void*>> decodeGraphsTensorNameToTensorPointer;
     std::vector<std::unordered_map<std::string, size_t>> decodeGraphsTensorNameToSize;
     std::vector<std::unordered_map<std::string, void*>> prefillGraphsTensorNameToTensorPointer;
@@ -122,11 +138,6 @@ private:
 
     std::unordered_map<std::string, void*> stateTensorsNameToTensorPointer;
 
-    int qnn_create_power_config_id();
-    int qnn_destory_power_config_id();
-    int qnn_set_power_config();
-    int qnn_register_op_package(std::string package_path, std::string interface_provider);
-    int qnn_set_rpc_latency_and_polling();
     int qnn_initialize_tensors();
 
     void fill_quantized_tensor(float value, Qnn_Tensor_t *tensor);

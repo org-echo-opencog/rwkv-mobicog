@@ -32,20 +32,47 @@ static inline T resolveSymbol(void* libHandle, const char* sym) {
   return ptr;
 }
 
+dynamicloadutil::StatusCode dynamicloadutil::loadModelLib(
+  std::string modelPath,
+  rwkv_app::QnnFunctionPointers* qnnFunctionPointers,
+  void** modelHandleRtn) {
+    rwkvmobile::LOGI("Loading model shared library ([model].so)");
+    void* libModelHandle = pal::dynamicloading::dlOpen(
+        modelPath.c_str(), pal::dynamicloading::DL_NOW | pal::dynamicloading::DL_LOCAL);
+    if (nullptr == libModelHandle) {
+      rwkvmobile::LOGE("Unable to load model. pal::dynamicloading::dlError(): %s",
+                pal::dynamicloading::dlError());
+      return StatusCode::FAIL_LOAD_MODEL;
+    }
+    if (nullptr != modelHandleRtn) {
+      *modelHandleRtn = libModelHandle;
+    }
+
+    std::string modelPrepareFunc = "QnnModel_composeGraphs";
+    qnnFunctionPointers->composeGraphsFnHandle =
+        resolveSymbol<rwkv_app::ComposeGraphsFnHandleType_t>(libModelHandle,
+                                                               modelPrepareFunc.c_str());
+    if (nullptr == qnnFunctionPointers->composeGraphsFnHandle) {
+      return StatusCode::FAIL_SYM_FUNCTION;
+    }
+
+    std::string modelFreeFunc = "QnnModel_freeGraphsInfo";
+    qnnFunctionPointers->freeGraphInfoFnHandle =
+        resolveSymbol<rwkv_app::FreeGraphInfoFnHandleType_t>(libModelHandle,
+                                                               modelFreeFunc.c_str());
+    if (nullptr == qnnFunctionPointers->freeGraphInfoFnHandle) {
+      return StatusCode::FAIL_SYM_FUNCTION;
+    }
+    return StatusCode::SUCCESS;
+}
+
+
 dynamicloadutil::StatusCode dynamicloadutil::getQnnFunctionPointers(
     std::string backendPath,
-    std::string modelPath,
     rwkv_app::QnnFunctionPointers* qnnFunctionPointers,
-    void** backendHandleRtn,
-    bool loadModelLib,
-    void** modelHandleRtn) {
-// #if defined(__ANDROID__)
-//   void* libBackendHandle = pal::dynamicloading::dlOpen(
-//       backendPath.c_str(), pal::dynamicloading::DL_NOW | pal::dynamicloading::DL_LOCAL);
-// #else
+    void** backendHandleRtn) {
   void* libBackendHandle = pal::dynamicloading::dlOpen(
       backendPath.c_str(), pal::dynamicloading::DL_NOW | pal::dynamicloading::DL_GLOBAL);
-// #endif
   if (nullptr == libBackendHandle) {
     rwkvmobile::LOGE("Unable to load backend. pal::dynamicloading::dlError(): %s",
               pal::dynamicloading::dlError());
@@ -91,40 +118,14 @@ dynamicloadutil::StatusCode dynamicloadutil::getQnnFunctionPointers(
     return StatusCode::FAIL_GET_INTERFACE_PROVIDERS;
   }
 
-  if (true == loadModelLib) {
-    rwkvmobile::LOGI("Loading model shared library ([model].so)");
-    void* libModelHandle = pal::dynamicloading::dlOpen(
-        modelPath.c_str(), pal::dynamicloading::DL_NOW | pal::dynamicloading::DL_LOCAL);
-    if (nullptr == libModelHandle) {
-      rwkvmobile::LOGE("Unable to load model. pal::dynamicloading::dlError(): %s",
-                pal::dynamicloading::dlError());
-      return StatusCode::FAIL_LOAD_MODEL;
-    }
-    if (nullptr != modelHandleRtn) {
-      *modelHandleRtn = libModelHandle;
-    }
-
-    std::string modelPrepareFunc = "QnnModel_composeGraphs";
-    qnnFunctionPointers->composeGraphsFnHandle =
-        resolveSymbol<rwkv_app::ComposeGraphsFnHandleType_t>(libModelHandle,
-                                                               modelPrepareFunc.c_str());
-    if (nullptr == qnnFunctionPointers->composeGraphsFnHandle) {
-      return StatusCode::FAIL_SYM_FUNCTION;
-    }
-
-    std::string modelFreeFunc = "QnnModel_freeGraphsInfo";
-    qnnFunctionPointers->freeGraphInfoFnHandle =
-        resolveSymbol<rwkv_app::FreeGraphInfoFnHandleType_t>(libModelHandle,
-                                                               modelFreeFunc.c_str());
-    if (nullptr == qnnFunctionPointers->freeGraphInfoFnHandle) {
-      return StatusCode::FAIL_SYM_FUNCTION;
-    }
-  } else {
-    rwkvmobile::LOGI("Model wasn't loaded from a shared library.");
-    if (nullptr != modelHandleRtn) {
-      *modelHandleRtn = nullptr;
-    }
-  }
+  // if (true == loadModelLib) {
+  //   return dynamicloadutil::loadModelLib(modelPath, qnnFunctionPointers, modelHandleRtn);
+  // } else {
+  //   rwkvmobile::LOGI("Model wasn't loaded from a shared library.");
+  //   if (nullptr != modelHandleRtn) {
+  //     *modelHandleRtn = nullptr;
+  //   }
+  // }
   return StatusCode::SUCCESS;
 }
 
