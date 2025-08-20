@@ -43,6 +43,7 @@
 
 #if defined(ENABLE_TTS)
 #include "frontend_utils.h"
+#include "tts_properties.h"
 #endif
 
 #if defined(ENABLE_TTS) || defined(ENABLE_WHISPER)
@@ -784,6 +785,81 @@ int runtime::set_audio_prompt(int model_id, std::string path) {
 #endif
 
 #ifdef ENABLE_TTS
+namespace {
+int generate_tts_output(
+    runtime* rt,
+    int model_id,
+    NucleusSampler* sampler,
+    execution_provider* backend,
+    float*& logits,
+    std::vector<int>& output_tokens
+) {
+    static const int tts_max_length = 3000;
+    static const int tts_top_k = 50;
+    static const float tts_top_p = 0.95;
+    static const float tts_temperature = 1.0;
+    static const int tts_eos_token = 8192;
+    static const int tts_tag_token_offset = 8193;
+
+    for (int i = 0; i < tts_max_length; i++) {
+        int idx = sampler->sample(logits, tts_tag_token_offset, tts_temperature, tts_top_k, tts_top_p);
+        backend->free_logits_if_allocated(logits);
+        if (idx == tts_eos_token) {
+            break;
+        }
+
+        output_tokens.push_back(idx);
+        int ret = rt->eval_logits(model_id, idx, logits);
+        if (ret || !logits) {
+            LOGE("[TTS] Error evaluating logits");
+            return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
+        }
+    }
+    return RWKV_SUCCESS;
+}
+
+void tts_detokenize_thread_main(
+    sparktts* sparktts_instance,
+    std::vector<float>& tts_output_samples_buffer,
+    const std::vector<int>& global_tokens,
+    const std::vector<int>& output_tokens,
+    const bool& generation_finished,
+    double& ttfa,
+    const std::chrono::high_resolution_clock::time_point& total_start
+) {
+    int actual_chunk_size = sparktts_instance->initial_chunk_size;
+    std::vector<int> semantic_tokens_buf;
+    sparktts_instance->resize_detokenizer_model(actual_chunk_size);
+    int semantic_token_pos = 0;
+    while (!generation_finished) {
+        if (output_tokens.size() - semantic_token_pos >= actual_chunk_size) {
+            std::vector<int> current_chunk_tokens(output_tokens.begin() + semantic_token_pos, output_tokens.begin() + semantic_token_pos + actual_chunk_size);
+            semantic_token_pos += actual_chunk_size;
+            int buffered_size = semantic_tokens_buf.size();
+            std::vector<int> current_semantic_tokens = semantic_tokens_buf;
+            current_semantic_tokens.insert(current_semantic_tokens.end(), current_chunk_tokens.begin(), current_chunk_tokens.end());
+            semantic_tokens_buf = std::vector<int>(current_semantic_tokens.begin() + (current_semantic_tokens.size() - sparktts_instance->overlap_size), current_semantic_tokens.end());
+            auto new_samples = sparktts_instance->detokenize_audio(global_tokens, current_semantic_tokens);
+            if (tts_output_samples_buffer.empty()) {
+                ttfa = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - total_start).count();
+                actual_chunk_size = sparktts_instance->chunk_size;
+                sparktts_instance->resize_detokenizer_model(actual_chunk_size);
+            }
+            tts_output_samples_buffer.insert(tts_output_samples_buffer.end(), new_samples.begin() + (16000 * buffered_size / 50), new_samples.end());
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    if (output_tokens.size() - semantic_token_pos > 0) {
+        std::vector<int> current_chunk_tokens(output_tokens.begin() + semantic_token_pos, output_tokens.end());
+        int buffered_size = semantic_tokens_buf.size();
+        std::vector<int> current_semantic_tokens = semantic_tokens_buf;
+        current_semantic_tokens.insert(current_semantic_tokens.end(), current_chunk_tokens.begin(), current_chunk_tokens.end());
+        auto new_samples = sparktts_instance->detokenize_audio(global_tokens, current_semantic_tokens);
+        tts_output_samples_buffer.insert(tts_output_samples_buffer.end(), new_samples.begin() + (16000 * buffered_size / 50), new_samples.end());
+    }
+}
+} // anonymous namespace
+
 int runtime::sparktts_load_models(
     std::string wav2vec2_path,
     std::string bicodec_tokenizer_path,
@@ -801,7 +877,7 @@ int runtime::sparktts_release_models() {
     return RWKV_SUCCESS;
 }
 
-int runtime::run_spark_tts(int model_id, std::string tts_text, std::string prompt_audio_text, std::string prompt_audio_path, std::string output_wav_path) {
+int runtime::run_spark_tts_zeroshot(int model_id, std::string tts_text, std::string prompt_audio_text, std::string prompt_audio_path, std::string output_wav_path) {
     if (_sparktts == nullptr) {
         return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
     }
@@ -844,12 +920,6 @@ int runtime::run_spark_tts(int model_id, std::string tts_text, std::string promp
 
     std::vector<int> output_tokens;
 
-    static const int tts_max_length = 3000;
-    static const int tts_top_k = 50;
-    static const float tts_top_p = 0.95;
-    static const float tts_temperature = 1.0;
-    static const int tts_eos_token = 8192;
-
     auto start = std::chrono::high_resolution_clock::now();
 
     clear_state(model_id);
@@ -860,20 +930,8 @@ int runtime::run_spark_tts(int model_id, std::string tts_text, std::string promp
         return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
     }
 
-    for (int i = 0; i < tts_max_length; i++) {
-        int idx = model->sampler->sample(logits, tts_tag_token_offset, tts_temperature, tts_top_k, tts_top_p);
-        model->backend->free_logits_if_allocated(logits);
-        if (idx == tts_eos_token) {
-            break;
-        }
-
-        output_tokens.push_back(idx);
-        ret = eval_logits(model_id, idx, logits);
-        if (ret || !logits) {
-            LOGE("[TTS] Error evaluating logits");
-            return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
-        }
-    }
+    ret = generate_tts_output(this, model_id, model->sampler.get(), model->backend.get(), logits, output_tokens);
+    if (ret) return ret;
 
     auto end = std::chrono::high_resolution_clock::now();
     double duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
@@ -895,7 +953,145 @@ int runtime::run_spark_tts(int model_id, std::string tts_text, std::string promp
     return RWKV_SUCCESS;
 }
 
-int runtime::run_spark_tts_streaming(int model_id, std::string tts_text, std::string prompt_audio_text, std::string prompt_audio_path, std::string output_wav_path) {
+int runtime::run_spark_tts_with_properties(int model_id, std::string tts_text, std::string output_wav_path,
+    std::string age, std::string gender, std::string emotion, std::string pitch, std::string speed,
+    std::vector<int> &global_tokens_output
+) {
+    if (_sparktts == nullptr) {
+        return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
+    }
+    auto &model = _models.at(model_id);
+
+    static const int tts_tag_token_offset = 8193;
+    static const int global_token_offset = 8196;
+
+    std::vector<int> properties_tokens = convert_standard_properties_to_tokens(age, gender, emotion, pitch, speed);
+
+    auto total_start = std::chrono::high_resolution_clock::now();
+    std::vector<int> global_tokens;
+    std::vector<int> semantic_tokens;
+
+    auto text_tokens = tokenizer_encode(model_id, tts_text);
+    if (text_tokens.empty()) {
+        LOGE("[TTS] Text tokenizer encode failed");
+        return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
+    }
+
+    std::vector<int> input_tokens = properties_tokens;
+    input_tokens.push_back(tts_tag_token_offset + 2); // tag_2
+    for (int i = 0; i < text_tokens.size(); i++) {
+        input_tokens.push_back(text_tokens[i]);
+    }
+    input_tokens.push_back(tts_tag_token_offset + 0); // tag_0
+
+    clear_state(model_id);
+    float *logits = nullptr;
+    int ret = eval_logits(model_id, input_tokens, logits);
+    if (ret || !logits) {
+        LOGE("[TTS] Error evaluating logits");
+        return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
+    }
+
+    for (int i = 0; i < 32; i++) { // generate 32 global_tokens
+        int idx = model->sampler->sample(logits, 4096, 1.0, 20, 0.95);
+        model->backend->free_logits_if_allocated(logits);
+
+        global_tokens.push_back(idx + global_token_offset);
+        ret = eval_logits(model_id, idx + global_token_offset, logits);
+        if (ret || !logits) {
+            LOGE("[TTS] Error evaluating logits");
+            return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
+        }
+    }
+
+    global_tokens_output = global_tokens;
+
+    ret = eval_logits(model_id, tts_tag_token_offset + 1, logits);
+    if (ret || !logits) {
+        LOGE("[TTS] Error evaluating logits");
+        return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
+    }
+
+    std::vector<int> output_tokens;
+
+    ret = generate_tts_output(this, model_id, model->sampler.get(), model->backend.get(), logits, output_tokens);
+    if (ret) return ret;
+
+    LOGI("[TTS] LLM output tokens: %d", output_tokens.size());
+    LOGI("[TTS] LLM prefill speed: %f tokens/s", get_avg_prefill_speed(model_id));
+    LOGI("[TTS] LLM decode speed: %f tokens/s", get_avg_decode_speed(model_id));
+
+    std::vector<float> output_samples = _sparktts->detokenize_audio(global_tokens, output_tokens);
+    save_samples_to_wav(output_samples, output_wav_path, 16000);
+
+    auto total_end = std::chrono::high_resolution_clock::now();
+    double total_duration = std::chrono::duration_cast<std::chrono::milliseconds>(total_end - total_start).count();
+    LOGI("[TTS] Total time: %lf ms", total_duration);
+    LOGI("[TTS] Output audio length: %lf s", output_samples.size() / 16000.0);
+    LOGI("[TTS] RTF: %lf", total_duration / 1e3f * 16000.0 / output_samples.size());
+
+    set_is_generating(model_id, false);
+    return RWKV_SUCCESS;
+}
+
+int runtime::run_spark_tts_with_global_tokens(int model_id, std::string tts_text, std::string output_wav_path, std::vector<int> global_tokens) {
+    if (_sparktts == nullptr) {
+        return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
+    }
+    auto &model = _models.at(model_id);
+
+    static const int tts_tag_token_offset = 8193;
+
+    auto total_start = std::chrono::high_resolution_clock::now();
+
+    auto text_tokens = tokenizer_encode(model_id, tts_text);
+    if (text_tokens.empty()) {
+        LOGE("[TTS] Text tokenizer encode failed");
+        return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
+    }
+
+    std::vector<int> input_tokens;
+    input_tokens.push_back(tts_tag_token_offset + 2); // tag_2
+    for (int i = 0; i < text_tokens.size(); i++) {
+        input_tokens.push_back(text_tokens[i]);
+    }
+    input_tokens.push_back(tts_tag_token_offset + 0); // tag_0
+    for (int i = 0; i < global_tokens.size(); i++) {
+        input_tokens.push_back(global_tokens[i]); // global_tokens are already offset by global_token_offset
+    }
+    input_tokens.push_back(tts_tag_token_offset + 1); // tag_1
+
+    clear_state(model_id);
+    float *logits = nullptr;
+    int ret = eval_logits(model_id, input_tokens, logits);
+    if (ret || !logits) {
+        LOGE("[TTS] Error evaluating logits");
+        return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
+    }
+
+    std::vector<int> output_tokens;
+
+    ret = generate_tts_output(this, model_id, model->sampler.get(), model->backend.get(), logits, output_tokens);
+    if (ret) return ret;
+
+    LOGI("[TTS] LLM output tokens: %d", output_tokens.size());
+    LOGI("[TTS] LLM prefill speed: %f tokens/s", get_avg_prefill_speed(model_id));
+    LOGI("[TTS] LLM decode speed: %f tokens/s", get_avg_decode_speed(model_id));
+
+    std::vector<float> output_samples = _sparktts->detokenize_audio(global_tokens, output_tokens);
+    save_samples_to_wav(output_samples, output_wav_path, 16000);
+
+    auto total_end = std::chrono::high_resolution_clock::now();
+    double total_duration = std::chrono::duration_cast<std::chrono::milliseconds>(total_end - total_start).count();
+    LOGI("[TTS] Total time: %lf ms", total_duration);
+    LOGI("[TTS] Output audio length: %lf s", output_samples.size() / 16000.0);
+    LOGI("[TTS] RTF: %lf", total_duration / 1e3f * 16000.0 / output_samples.size());
+
+    set_is_generating(model_id, false);
+    return RWKV_SUCCESS;
+}
+
+int runtime::run_spark_tts_zeroshot_streaming(int model_id, std::string tts_text, std::string prompt_audio_text, std::string prompt_audio_path, std::string output_wav_path) {
     if (_sparktts == nullptr) {
         return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
     }
@@ -999,36 +1195,7 @@ int runtime::run_spark_tts_streaming(int model_id, std::string tts_text, std::st
 
     double ttfa = 0.0;
     std::thread detokenize_thread([&]() {
-        int actual_chunk_size = _sparktts->initial_chunk_size;
-        std::vector<int> semantic_tokens_buf;
-        _sparktts->resize_detokenizer_model(actual_chunk_size);
-        int semantic_token_pos = 0;
-        while (!generation_finished) {
-            if (output_tokens.size() - semantic_token_pos >= actual_chunk_size) {
-                std::vector<int> current_chunk_tokens(output_tokens.begin() + semantic_token_pos, output_tokens.begin() + semantic_token_pos + actual_chunk_size);
-                semantic_token_pos += actual_chunk_size;
-                int buffered_size = semantic_tokens_buf.size();
-                std::vector<int> current_semantic_tokens = semantic_tokens_buf;
-                current_semantic_tokens.insert(current_semantic_tokens.end(), current_chunk_tokens.begin(), current_chunk_tokens.end());
-                semantic_tokens_buf = std::vector<int>(current_semantic_tokens.begin() + (current_semantic_tokens.size() - _sparktts->overlap_size), current_semantic_tokens.end());
-                auto new_samples = _sparktts->detokenize_audio(global_tokens, current_semantic_tokens);
-                if (_tts_output_samples_buffer.empty()) {
-                    ttfa = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - total_start).count();
-                    actual_chunk_size = _sparktts->chunk_size;
-                    _sparktts->resize_detokenizer_model(actual_chunk_size);
-                }
-                _tts_output_samples_buffer.insert(_tts_output_samples_buffer.end(), new_samples.begin() + (16000 * buffered_size / 50), new_samples.end());
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
-        }
-        if (output_tokens.size() - semantic_token_pos > 0) {
-            std::vector<int> current_chunk_tokens(output_tokens.begin() + semantic_token_pos, output_tokens.end());
-            int buffered_size = semantic_tokens_buf.size();
-            std::vector<int> current_semantic_tokens = semantic_tokens_buf;
-            current_semantic_tokens.insert(current_semantic_tokens.end(), current_chunk_tokens.begin(), current_chunk_tokens.end());
-            auto new_samples = _sparktts->detokenize_audio(global_tokens, current_semantic_tokens);
-            _tts_output_samples_buffer.insert(_tts_output_samples_buffer.end(), new_samples.begin() + (16000 * buffered_size / 50), new_samples.end());
-        }
+        tts_detokenize_thread_main(_sparktts.get(), _tts_output_samples_buffer, global_tokens, output_tokens, generation_finished, ttfa, total_start);
     });
 
     llm_inference_thread.join();
@@ -1047,6 +1214,279 @@ int runtime::run_spark_tts_streaming(int model_id, std::string tts_text, std::st
     LOGI("[TTS] Output audio length: %lf s", _tts_output_samples_buffer.size() / 16000.0);
     LOGI("[TTS] RTF (%s): %lf", read_from_cache ? "prompt audio tokens cache hit" : "prompt audio tokens cache miss", total_duration / 1e3f * 16000.0 / _tts_output_samples_buffer.size());
     LOGI("[TTS] TTFA (%s): %lf ms", read_from_cache ? "prompt audio tokens cache hit" : "prompt audio tokens cache miss", ttfa);
+
+    set_is_generating(model_id, false);
+    return RWKV_SUCCESS;
+}
+
+int runtime::run_spark_tts_with_properties_streaming(int model_id, std::string tts_text, std::string output_wav_path,
+    std::string age, std::string gender, std::string emotion, std::string pitch, std::string speed,
+    std::vector<int> &global_tokens_output
+) {
+    if (_sparktts == nullptr) {
+        return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
+    }
+
+#if !defined(_WIN32)
+    auto texts = tts_frontend_utils::process_text(tts_text,
+        [this, model_id](const std::string& text) -> std::vector<int> {
+            return tokenizer_encode(model_id, text);
+        },
+        _tn_list
+    );
+#else
+    auto texts = tts_frontend_utils::process_text(tts_text,
+        [this, model_id](const std::string& text) -> std::vector<int> {
+            return tokenizer_encode(model_id, text);
+        }
+    );
+#endif
+
+    _tts_output_samples_buffer.clear();
+    auto total_start = std::chrono::high_resolution_clock::now();
+    std::vector<int> global_tokens;
+    std::vector<int> properties_tokens = convert_standard_properties_to_tokens(age, gender, emotion, pitch, speed);
+
+    // variables between threads
+    bool generation_finished = false;
+    std::vector<int> output_tokens;
+
+    auto llm_inference_thread = std::thread([&]() {
+        auto &model = _models.at(model_id);
+        static const int tts_tag_token_offset = 8193;
+        static const int global_token_offset = 8196;
+
+        static const int tts_max_length = 3000;
+        static const int tts_top_k = 50;
+        static const float tts_top_p = 0.95;
+        static const float tts_temperature = 1.0;
+        static const int tts_eos_token = 8192;
+        for (auto &text : texts) {
+            LOGI("[TTS] LLM input text: %s", text.c_str());
+            auto text_tokens = tokenizer_encode(model_id, text);
+            if (text_tokens.empty()) {
+                LOGE("[TTS] Text tokenizer encode failed");
+                generation_finished = true;
+                return;
+            }
+
+            clear_state(model_id);
+            float *logits = nullptr;
+
+            if (global_tokens.empty()) {
+                // generate global tokens
+                std::vector<int> input_tokens = properties_tokens;
+                input_tokens.push_back(tts_tag_token_offset + 2); // tag_2
+                for (int i = 0; i < text_tokens.size(); i++) {
+                    input_tokens.push_back(text_tokens[i]);
+                }
+                input_tokens.push_back(tts_tag_token_offset + 0); // tag_0
+
+                int ret = eval_logits(model_id, input_tokens, logits);
+                if (ret || !logits) {
+                    LOGE("[TTS] Error evaluating logits");
+                    generation_finished = true;
+                    return;
+                }
+
+                for (int i = 0; i < 32; i++) { // generate 32 global_tokens
+                    int idx = model->sampler->sample(logits, 4096, 1.0, 20, 0.95);
+                    model->backend->free_logits_if_allocated(logits);
+
+                    global_tokens.push_back(idx + global_token_offset);
+                    ret = eval_logits(model_id, idx + global_token_offset, logits);
+                    if (ret || !logits) {
+                        LOGE("[TTS] Error evaluating logits");
+                        generation_finished = true;
+                        return;
+                    }
+                }
+
+                global_tokens_output = global_tokens;
+
+                ret = eval_logits(model_id, tts_tag_token_offset + 1, logits);
+                if (ret || !logits) {
+                    LOGE("[TTS] Error evaluating logits");
+                    generation_finished = true;
+                    return;
+                }
+            } else {
+                std::vector<int> input_tokens = {tts_tag_token_offset + 2}; // tag_2
+                for (int i = 0; i < text_tokens.size(); i++) {
+                    input_tokens.push_back(text_tokens[i]);
+                }
+                input_tokens.push_back(tts_tag_token_offset + 0); // tag_0
+                for (int i = 0; i < global_tokens.size(); i++) {
+                    input_tokens.push_back(global_tokens[i] + global_token_offset);
+                }
+                input_tokens.push_back(tts_tag_token_offset + 1); // tag_1
+
+                int ret = eval_logits(model_id, input_tokens, logits);
+                if (ret || !logits) {
+                    LOGE("[TTS] Error evaluating logits");
+                    generation_finished = true;
+                    return;
+                }
+            }
+
+            logits[tts_eos_token] = -1e9;
+
+            for (int i = 0; i < tts_max_length; i++) {
+                int idx = model->sampler->sample(logits, tts_tag_token_offset, tts_temperature, tts_top_k, tts_top_p);
+                model->backend->free_logits_if_allocated(logits);
+                if (idx == tts_eos_token) {
+                    LOGI("[TTS] EOS token found");
+                    break;
+                }
+
+                output_tokens.push_back(idx);
+                int ret = eval_logits(model_id, idx, logits);
+                if (ret || !logits) {
+                    LOGE("[TTS] Error evaluating logits");
+                    generation_finished = true;
+                    return;
+                }
+            }
+        }
+        generation_finished = true;
+    });
+
+    double ttfa = 0.0;
+    std::thread detokenize_thread([&]() {
+        tts_detokenize_thread_main(_sparktts.get(), _tts_output_samples_buffer, global_tokens, output_tokens, generation_finished, ttfa, total_start);
+    });
+
+    llm_inference_thread.join();
+    detokenize_thread.join();
+
+    LOGI("[TTS] %s: LLM output tokens: %d", __func__, output_tokens.size());
+    LOGI("[TTS] %s: LLM prefill speed: %f tokens/s", __func__, get_avg_prefill_speed(model_id));
+    LOGI("[TTS] %s: LLM decode speed: %f tokens/s", __func__, get_avg_decode_speed(model_id));
+    if (!_tts_output_samples_buffer.empty()) {
+        save_samples_to_wav(_tts_output_samples_buffer, output_wav_path, 16000);
+    }
+
+    auto total_end = std::chrono::high_resolution_clock::now();
+    double total_duration = std::chrono::duration_cast<std::chrono::milliseconds>(total_end - total_start).count();
+    LOGI("[TTS] %s: Total time: %lf ms", __func__, total_duration);
+    LOGI("[TTS] %s: Output audio length: %lf s", __func__, _tts_output_samples_buffer.size() / 16000.0);
+    LOGI("[TTS] %s: RTF: %lf", __func__, total_duration / 1e3f * 16000.0 / _tts_output_samples_buffer.size());
+    LOGI("[TTS] %s: TTFA: %lf ms", __func__, ttfa);
+
+    set_is_generating(model_id, false);
+    return RWKV_SUCCESS;
+}
+
+
+int runtime::run_spark_tts_with_global_tokens_streaming(int model_id, std::string tts_text, std::string output_wav_path, std::vector<int> global_tokens) {
+    if (_sparktts == nullptr) {
+        return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
+    }
+
+#if !defined(_WIN32)
+    auto texts = tts_frontend_utils::process_text(tts_text,
+        [this, model_id](const std::string& text) -> std::vector<int> {
+            return tokenizer_encode(model_id, text);
+        },
+        _tn_list
+    );
+#else
+    auto texts = tts_frontend_utils::process_text(tts_text,
+        [this, model_id](const std::string& text) -> std::vector<int> {
+            return tokenizer_encode(model_id, text);
+        }
+    );
+#endif
+
+    _tts_output_samples_buffer.clear();
+    auto total_start = std::chrono::high_resolution_clock::now();
+
+    // variables between threads
+    bool generation_finished = false;
+    std::vector<int> output_tokens;
+
+    auto llm_inference_thread = std::thread([&]() {
+        auto &model = _models.at(model_id);
+        static const int tts_tag_token_offset = 8193;
+        static const int global_token_offset = 8196;
+
+        static const int tts_max_length = 3000;
+        static const int tts_top_k = 50;
+        static const float tts_top_p = 0.95;
+        static const float tts_temperature = 1.0;
+        static const int tts_eos_token = 8192;
+        for (auto &text : texts) {
+            LOGI("[TTS] LLM input text: %s", text.c_str());
+            auto text_tokens = tokenizer_encode(model_id, text);
+            if (text_tokens.empty()) {
+                LOGE("[TTS] Text tokenizer encode failed");
+                generation_finished = true;
+                return;
+            }
+
+            clear_state(model_id);
+            float *logits = nullptr;
+
+            std::vector<int> input_tokens = {tts_tag_token_offset + 2}; // tag_2
+            for (int i = 0; i < text_tokens.size(); i++) {
+                input_tokens.push_back(text_tokens[i]);
+            }
+            input_tokens.push_back(tts_tag_token_offset + 0); // tag_0
+            for (int i = 0; i < global_tokens.size(); i++) {
+                input_tokens.push_back(global_tokens[i]); // global_tokens are already offset by global_token_offset
+            }
+            input_tokens.push_back(tts_tag_token_offset + 1); // tag_1
+
+            int ret = eval_logits(model_id, input_tokens, logits);
+            if (ret || !logits) {
+                LOGE("[TTS] Error evaluating logits");
+                generation_finished = true;
+                return;
+            }
+
+            logits[tts_eos_token] = -1e9;
+
+            for (int i = 0; i < tts_max_length; i++) {
+                int idx = model->sampler->sample(logits, tts_tag_token_offset, tts_temperature, tts_top_k, tts_top_p);
+                model->backend->free_logits_if_allocated(logits);
+                if (idx == tts_eos_token) {
+                    LOGI("[TTS] EOS token found");
+                    break;
+                }
+
+                output_tokens.push_back(idx);
+                int ret = eval_logits(model_id, idx, logits);
+                if (ret || !logits) {
+                    LOGE("[TTS] Error evaluating logits");
+                    generation_finished = true;
+                    return;
+                }
+            }
+        }
+        generation_finished = true;
+    });
+
+    double ttfa = 0.0;
+    std::thread detokenize_thread([&]() {
+        tts_detokenize_thread_main(_sparktts.get(), _tts_output_samples_buffer, global_tokens, output_tokens, generation_finished, ttfa, total_start);
+    });
+
+    llm_inference_thread.join();
+    detokenize_thread.join();
+
+    LOGI("[TTS] %s: LLM output tokens: %d", __func__, output_tokens.size());
+    LOGI("[TTS] %s: LLM prefill speed: %f tokens/s", __func__, get_avg_prefill_speed(model_id));
+    LOGI("[TTS] %s: LLM decode speed: %f tokens/s", __func__, get_avg_decode_speed(model_id));
+    if (!_tts_output_samples_buffer.empty()) {
+        save_samples_to_wav(_tts_output_samples_buffer, output_wav_path, 16000);
+    }
+
+    auto total_end = std::chrono::high_resolution_clock::now();
+    double total_duration = std::chrono::duration_cast<std::chrono::milliseconds>(total_end - total_start).count();
+    LOGI("[TTS] %s: Total time: %lf ms", __func__, total_duration);
+    LOGI("[TTS] %s: Output audio length: %lf s", __func__, _tts_output_samples_buffer.size() / 16000.0);
+    LOGI("[TTS] %s: RTF: %lf", __func__, total_duration / 1e3f * 16000.0 / _tts_output_samples_buffer.size());
+    LOGI("[TTS] %s: TTFA: %lf ms", __func__, ttfa);
 
     set_is_generating(model_id, false);
     return RWKV_SUCCESS;

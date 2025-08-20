@@ -7,9 +7,6 @@
 #include "MNN/Interpreter.hpp"
 #include <MNN/expr/Module.hpp>
 
-// #include "net.h"
-// #include "mat.h"
-
 namespace rwkvmobile {
 
 class sparktts {

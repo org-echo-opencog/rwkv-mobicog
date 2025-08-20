@@ -267,15 +267,6 @@ std::vector<float> sparktts::detokenize_audio(std::vector<int> global_tokens, st
     std::vector<float> output_values((float*)output_ptr_audio, (float*)output_ptr_audio + output_size_audio);
     output_tensors["wav_rec"]->unmap(MNN::Tensor::MAP_TENSOR_READ, output_tensors["wav_rec"]->getDimensionType(), output_ptr_audio);
 
-    // ncnn::Extractor ex = bicodec_detokenizer_ncnn_net.create_extractor();
-    // ncnn::Mat semantic_tokens_mat(semantic_tokens.size(), (void*)semantic_tokens.data());
-    // ncnn::Mat global_tokens_mat(global_tokens.size(), (void*)global_tokens.data());
-    // ncnn::Mat output_mat;
-    // ex.input("in0", semantic_tokens_mat);
-    // ex.input("in1", global_tokens_mat);
-    // ex.extract("out0", output_mat);
-    // std::vector<float> output_values((float*)output_mat.data, (float*)output_mat.data + output_mat.total());
-
     auto end = std::chrono::high_resolution_clock::now();
     double duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
     LOGI("[TTS] Detokenize audio time: %f ms", duration);

@@ -147,6 +147,10 @@ int rwkvmobile_runtime_sparktts_release_models(rwkvmobile_runtime_t runtime);
 
 int rwkvmobile_runtime_run_spark_tts_streaming_async(rwkvmobile_runtime_t runtime, int model_id, const char * tts_text, const char * prompt_audio_text, const char * prompt_audio_path, const char * output_wav_path);
 
+int rwkvmobile_runtime_run_spark_tts_with_global_tokens_streaming_async(rwkvmobile_runtime_t runtime, int model_id, const char * tts_text, const char * output_wav_path, const int * global_tokens);
+
+int rwkvmobile_runtime_run_spark_tts_with_properties_streaming_async(rwkvmobile_runtime_t runtime, int model_id, const char * tts_text, const char * output_wav_path, const char * age, const char * gender, const char * emotion, const char * pitch, const char * speed, int * global_tokens_output);
+
 struct tts_streaming_buffer rwkvmobile_runtime_get_tts_streaming_buffer(rwkvmobile_runtime_t runtime);
 
 int rwkvmobile_runtime_tts_register_text_normalizer(rwkvmobile_runtime_t runtime, const char * path);

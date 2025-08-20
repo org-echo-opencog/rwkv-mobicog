@@ -11,23 +11,23 @@ class web_rwkv_state {
 public:
     web_rwkv_state(StateRaw raw) : raw(raw) {
     }
-    
+
     ~web_rwkv_state() {
         if (raw.state && raw.len > 0) {
             ::free_state(raw);
         }
     }
-    
+
 
     web_rwkv_state(const web_rwkv_state&) = delete;
     web_rwkv_state& operator=(const web_rwkv_state&) = delete;
 
-    web_rwkv_state(web_rwkv_state&& other) noexcept 
+    web_rwkv_state(web_rwkv_state&& other) noexcept
         : raw(other.raw) {
         other.raw.state = nullptr;
         other.raw.len = 0;
     }
-    
+
     web_rwkv_state& operator=(web_rwkv_state&& other) noexcept {
         if (this != &other) {
             if (raw.state && raw.len > 0) {

@@ -553,7 +553,52 @@ int rwkvmobile_runtime_run_spark_tts_streaming_async(rwkvmobile_runtime_t runtim
         prompt_audio_text_str = std::string(prompt_audio_text);
     }
     std::thread generation_thread([=]() {
-        int ret = rt->run_spark_tts_streaming(model_id, tts_text, prompt_audio_text_str, prompt_audio_path, output_wav_path);
+        int ret = rt->run_spark_tts_zeroshot_streaming(model_id, tts_text, prompt_audio_text_str, prompt_audio_path, output_wav_path);
+        return ret;
+    });
+
+    generation_thread.detach();
+    return RWKV_SUCCESS;
+#else
+    return RWKV_ERROR_UNSUPPORTED;
+#endif
+}
+
+int rwkvmobile_runtime_run_spark_tts_with_global_tokens_streaming_async(rwkvmobile_runtime_t runtime, int model_id, const char * tts_text, const char * output_wav_path, const int * global_tokens) {
+#if ENABLE_TTS
+    if (runtime == nullptr || tts_text == nullptr || output_wav_path == nullptr || global_tokens == nullptr) {
+        return RWKV_ERROR_INVALID_PARAMETERS;
+    }
+    auto rt = static_cast<class runtime *>(runtime);
+    rt->set_is_generating(model_id, true);
+    rt->set_stop_signal(model_id, false);
+    std::vector<int> global_tokens_vec(global_tokens, global_tokens + 32);
+    std::thread generation_thread([=]() {
+        int ret = rt->run_spark_tts_with_global_tokens_streaming(model_id, tts_text, output_wav_path, global_tokens_vec);
+        return ret;
+    });
+
+    generation_thread.detach();
+    return RWKV_SUCCESS;
+#else
+    return RWKV_ERROR_UNSUPPORTED;
+#endif
+}
+
+int rwkvmobile_runtime_run_spark_tts_with_properties_streaming_async(rwkvmobile_runtime_t runtime, int model_id, const char * tts_text, const char * output_wav_path, const char * age, const char * gender, const char * emotion, const char * pitch, const char * speed, int * global_tokens_output) {
+#if ENABLE_TTS
+    if (runtime == nullptr || tts_text == nullptr || output_wav_path == nullptr || age == nullptr || gender == nullptr || emotion == nullptr || pitch == nullptr || speed == nullptr || global_tokens_output == nullptr) {
+        return RWKV_ERROR_INVALID_PARAMETERS;
+    }
+    auto rt = static_cast<class runtime *>(runtime);
+    rt->set_is_generating(model_id, true);
+    rt->set_stop_signal(model_id, false);
+    std::thread generation_thread([=]() {
+        std::vector<int> global_tokens_vec;
+        int ret = rt->run_spark_tts_with_properties_streaming(model_id, tts_text, output_wav_path, age, gender, emotion, pitch, speed, global_tokens_vec);
+        if (ret == RWKV_SUCCESS) {
+            memcpy(global_tokens_output, global_tokens_vec.data(), 32 * sizeof(int));
+        }
         return ret;
     });
 
@@ -717,7 +762,6 @@ struct loaded_models_list rwkvmobile_runtime_get_loaded_models_info(rwkvmobile_r
 
         model->model_id = pair.first;
 
-        // 分配并复制字符串
         auto allocate_string = [](const std::string& str) -> char* {
             char* result = static_cast<char*>(malloc(str.length() + 1));
             if (result) {

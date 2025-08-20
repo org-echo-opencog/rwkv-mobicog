@@ -132,8 +132,17 @@ public:
 
     int sparktts_release_models();
 
-    int run_spark_tts(int model_id, std::string tts_text, std::string prompt_audio_text, std::string prompt_audio_path, std::string output_wav_path);
-    int run_spark_tts_streaming(int model_id, std::string tts_text, std::string prompt_audio_text, std::string prompt_audio_path, std::string output_wav_path);
+    int run_spark_tts_zeroshot(int model_id, std::string tts_text, std::string prompt_audio_text, std::string prompt_audio_path, std::string output_wav_path);
+    int run_spark_tts_with_properties(int model_id, std::string tts_text, std::string output_wav_path,
+        std::string age, std::string gender, std::string emotion, std::string pitch, std::string speed,
+        std::vector<int> &global_tokens_output);
+    int run_spark_tts_with_global_tokens(int model_id, std::string tts_text, std::string output_wav_path, std::vector<int> global_tokens);
+
+    int run_spark_tts_zeroshot_streaming(int model_id, std::string tts_text, std::string prompt_audio_text, std::string prompt_audio_path, std::string output_wav_path);
+    int run_spark_tts_with_properties_streaming(int model_id, std::string tts_text, std::string output_wav_path,
+        std::string age, std::string gender, std::string emotion, std::string pitch, std::string speed,
+        std::vector<int> &global_tokens_output);
+    int run_spark_tts_with_global_tokens_streaming(int model_id, std::string tts_text, std::string output_wav_path, std::vector<int> global_tokens);
 
     std::vector<float>& tts_get_streaming_buffer() {
         return _tts_output_samples_buffer;

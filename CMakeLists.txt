@@ -224,6 +224,7 @@ if (ENABLE_WHISPER OR ENABLE_TTS)
         set(RWKV_MOBILE_SRCS ${RWKV_MOBILE_SRCS}
             src/multimodal/tts/sparktts.cpp
             src/multimodal/tts/frontend_utils.cpp
+            src/multimodal/tts/tts_properties.cpp
         )
 
         if (NOT WIN32)

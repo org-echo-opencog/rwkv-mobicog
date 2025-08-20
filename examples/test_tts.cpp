@@ -33,8 +33,8 @@ int main(int argc, char **argv) {
         runtime.set_cache_dir("./");
     }
 
-    for (int i = 0; i < 2; i++) {
-        runtime.run_spark_tts_streaming(model_id, "他们小心翼翼地调整电路，确保每个部件都正确连接，红灯、绿灯、黄灯依次亮起，仿佛在讲述一个关于交通规则的故事。", "", argv[4], "output.wav");
+    for (int i = 0; i < 1; i++) {
+        runtime.run_spark_tts_zeroshot_streaming(model_id, "他们小心翼翼地调整电路，确保每个部件都正确连接，红灯、绿灯、黄灯依次亮起，仿佛在讲述一个关于交通规则的故事。", "", argv[4], "output.wav");
     }
     // runtime.run_spark_tts("他们小心翼翼地调整电路，确保每个部件都正确连接，红灯、绿灯、黄灯依次亮起，仿佛在讲述一个关于交通规则的故事。", "", argv[4], "output.wav");
 
