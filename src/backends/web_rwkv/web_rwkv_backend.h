@@ -66,7 +66,7 @@ public:
     int release_model() override;
     int release() override;
 private:
-    int logits_len_from_backend = 0;
+    std::vector<float> logits_buffer;
 };
 
 }

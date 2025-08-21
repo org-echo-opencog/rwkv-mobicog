@@ -4,6 +4,7 @@
 #include "backend.h"
 #include "web_rwkv_backend.h"
 #include "commondef.h"
+#include "logger.h"
 #include <memory>
 
 namespace rwkvmobile {
@@ -56,10 +57,17 @@ int web_rwkv_backend::eval(int id, float *& logits) {
     uint32_t id_u32 = (uint32_t)id;
     auto ret = infer_raw_last(&id_u32, 1);
     if (!ret.len || !ret.logits) {
+        LOGE("web_rwkv_backend::eval: failed to infer_raw_last");
         return RWKV_ERROR_EVAL;
     }
-    logits_len_from_backend = ret.len;
-    logits = ret.logits;
+
+    if (logits_buffer.size() != vocab_size) {
+        logits_buffer.resize(vocab_size);
+    }
+    memcpy(logits_buffer.data(), ret.logits, vocab_size * sizeof(float));
+    logits = logits_buffer.data();
+
+    ::free_raw(ret);
     return RWKV_SUCCESS;
 }
 
@@ -69,19 +77,18 @@ int web_rwkv_backend::eval(std::vector<int> ids, float *& logits, bool skip_logi
     if (!ret.len || !ret.logits) {
         return RWKV_ERROR_EVAL;
     }
-    logits_len_from_backend = ret.len;
-    logits = ret.logits;
+    if (logits_buffer.size() != vocab_size) {
+        logits_buffer.resize(vocab_size);
+    }
+    memcpy(logits_buffer.data(), ret.logits, vocab_size * sizeof(float));
+    logits = logits_buffer.data();
+
+    ::free_raw(ret);
     return RWKV_SUCCESS;
 }
 
 void web_rwkv_backend::free_logits_if_allocated(float *& logits) {
-    if (logits) {
-        ModelOutput output;
-        output.len = (uintptr_t)logits_len_from_backend;
-        output.logits = logits;
-        ::free_raw(output);
-        logits = nullptr;
-    }
+    return;
 }
 
 bool web_rwkv_backend::is_available() {
