@@ -918,6 +918,11 @@ int runtime::run_spark_tts_zeroshot(int model_id, std::string tts_text, std::str
         input_tokens.push_back(semantic_tokens[i]);
     }
 
+    _global_tokens_output.clear();
+    for (auto token : global_tokens) {
+        _global_tokens_output.push_back(token + global_token_offset);
+    }
+
     std::vector<int> output_tokens;
 
     auto start = std::chrono::high_resolution_clock::now();
@@ -954,9 +959,7 @@ int runtime::run_spark_tts_zeroshot(int model_id, std::string tts_text, std::str
 }
 
 int runtime::run_spark_tts_with_properties(int model_id, std::string tts_text, std::string output_wav_path,
-    std::string age, std::string gender, std::string emotion, std::string pitch, std::string speed,
-    std::vector<int> &global_tokens_output
-) {
+    std::string age, std::string gender, std::string emotion, std::string pitch, std::string speed) {
     if (_sparktts == nullptr) {
         return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
     }
@@ -1004,7 +1007,7 @@ int runtime::run_spark_tts_with_properties(int model_id, std::string tts_text, s
         }
     }
 
-    global_tokens_output = global_tokens;
+    _global_tokens_output = global_tokens;
 
     ret = eval_logits(model_id, tts_tag_token_offset + 1, logits);
     if (ret || !logits) {
@@ -1122,6 +1125,12 @@ int runtime::run_spark_tts_zeroshot_streaming(int model_id, std::string tts_text
         return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
     }
 
+    static const int global_token_offset = 8196;
+    _global_tokens_output.clear();
+    for (auto token : global_tokens) {
+        _global_tokens_output.push_back(token + global_token_offset);
+    }
+
     if (prompt_audio_text.empty()) {
         semantic_tokens.clear();
     }
@@ -1220,9 +1229,7 @@ int runtime::run_spark_tts_zeroshot_streaming(int model_id, std::string tts_text
 }
 
 int runtime::run_spark_tts_with_properties_streaming(int model_id, std::string tts_text, std::string output_wav_path,
-    std::string age, std::string gender, std::string emotion, std::string pitch, std::string speed,
-    std::vector<int> &global_tokens_output
-) {
+    std::string age, std::string gender, std::string emotion, std::string pitch, std::string speed) {
     if (_sparktts == nullptr) {
         return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
     }
@@ -1302,7 +1309,7 @@ int runtime::run_spark_tts_with_properties_streaming(int model_id, std::string t
                     }
                 }
 
-                global_tokens_output = global_tokens;
+                _global_tokens_output = global_tokens;
 
                 ret = eval_logits(model_id, tts_tag_token_offset + 1, logits);
                 if (ret || !logits) {

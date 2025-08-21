@@ -661,7 +661,6 @@ ffi.Pointer<ffi.Char> gender,
 ffi.Pointer<ffi.Char> emotion,
 ffi.Pointer<ffi.Char> pitch,
 ffi.Pointer<ffi.Char> speed,
-ffi.Pointer<ffi.Int> global_tokens_output,
 ) {
   return _rwkvmobile_runtime_run_spark_tts_with_properties_streaming_async(runtime,
 model_id,
@@ -672,13 +671,12 @@ gender,
 emotion,
 pitch,
 speed,
-global_tokens_output,
 );
 }
 
 late final _rwkvmobile_runtime_run_spark_tts_with_properties_streaming_asyncPtr = _lookup<
-    ffi.NativeFunction<ffi.Int Function(rwkvmobile_runtime_t , ffi.Int , ffi.Pointer<ffi.Char> , ffi.Pointer<ffi.Char> , ffi.Pointer<ffi.Char> , ffi.Pointer<ffi.Char> , ffi.Pointer<ffi.Char> , ffi.Pointer<ffi.Char> , ffi.Pointer<ffi.Char> , ffi.Pointer<ffi.Int> )>>('rwkvmobile_runtime_run_spark_tts_with_properties_streaming_async');
-late final _rwkvmobile_runtime_run_spark_tts_with_properties_streaming_async = _rwkvmobile_runtime_run_spark_tts_with_properties_streaming_asyncPtr.asFunction<int Function(rwkvmobile_runtime_t , int , ffi.Pointer<ffi.Char> , ffi.Pointer<ffi.Char> , ffi.Pointer<ffi.Char> , ffi.Pointer<ffi.Char> , ffi.Pointer<ffi.Char> , ffi.Pointer<ffi.Char> , ffi.Pointer<ffi.Char> , ffi.Pointer<ffi.Int> )>();
+    ffi.NativeFunction<ffi.Int Function(rwkvmobile_runtime_t , ffi.Int , ffi.Pointer<ffi.Char> , ffi.Pointer<ffi.Char> , ffi.Pointer<ffi.Char> , ffi.Pointer<ffi.Char> , ffi.Pointer<ffi.Char> , ffi.Pointer<ffi.Char> , ffi.Pointer<ffi.Char> )>>('rwkvmobile_runtime_run_spark_tts_with_properties_streaming_async');
+late final _rwkvmobile_runtime_run_spark_tts_with_properties_streaming_async = _rwkvmobile_runtime_run_spark_tts_with_properties_streaming_asyncPtr.asFunction<int Function(rwkvmobile_runtime_t , int , ffi.Pointer<ffi.Char> , ffi.Pointer<ffi.Char> , ffi.Pointer<ffi.Char> , ffi.Pointer<ffi.Char> , ffi.Pointer<ffi.Char> , ffi.Pointer<ffi.Char> , ffi.Pointer<ffi.Char> )>();
 
 tts_streaming_buffer rwkvmobile_runtime_get_tts_streaming_buffer(rwkvmobile_runtime_t runtime,
 ) {
@@ -689,6 +687,16 @@ tts_streaming_buffer rwkvmobile_runtime_get_tts_streaming_buffer(rwkvmobile_runt
 late final _rwkvmobile_runtime_get_tts_streaming_bufferPtr = _lookup<
     ffi.NativeFunction<tts_streaming_buffer Function(rwkvmobile_runtime_t )>>('rwkvmobile_runtime_get_tts_streaming_buffer');
 late final _rwkvmobile_runtime_get_tts_streaming_buffer = _rwkvmobile_runtime_get_tts_streaming_bufferPtr.asFunction<tts_streaming_buffer Function(rwkvmobile_runtime_t )>();
+
+ffi.Pointer<ffi.Int> rwkvmobile_runtime_get_tts_global_tokens_output(rwkvmobile_runtime_t runtime,
+) {
+  return _rwkvmobile_runtime_get_tts_global_tokens_output(runtime,
+);
+}
+
+late final _rwkvmobile_runtime_get_tts_global_tokens_outputPtr = _lookup<
+    ffi.NativeFunction<ffi.Pointer<ffi.Int> Function(rwkvmobile_runtime_t )>>('rwkvmobile_runtime_get_tts_global_tokens_output');
+late final _rwkvmobile_runtime_get_tts_global_tokens_output = _rwkvmobile_runtime_get_tts_global_tokens_outputPtr.asFunction<ffi.Pointer<ffi.Int> Function(rwkvmobile_runtime_t )>();
 
 int rwkvmobile_runtime_tts_register_text_normalizer(rwkvmobile_runtime_t runtime,
 ffi.Pointer<ffi.Char> path,

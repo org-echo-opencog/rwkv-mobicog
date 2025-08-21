@@ -585,20 +585,16 @@ int rwkvmobile_runtime_run_spark_tts_with_global_tokens_streaming_async(rwkvmobi
 #endif
 }
 
-int rwkvmobile_runtime_run_spark_tts_with_properties_streaming_async(rwkvmobile_runtime_t runtime, int model_id, const char * tts_text, const char * output_wav_path, const char * age, const char * gender, const char * emotion, const char * pitch, const char * speed, int * global_tokens_output) {
+int rwkvmobile_runtime_run_spark_tts_with_properties_streaming_async(rwkvmobile_runtime_t runtime, int model_id, const char * tts_text, const char * output_wav_path, const char * age, const char * gender, const char * emotion, const char * pitch, const char * speed) {
 #if ENABLE_TTS
-    if (runtime == nullptr || tts_text == nullptr || output_wav_path == nullptr || age == nullptr || gender == nullptr || emotion == nullptr || pitch == nullptr || speed == nullptr || global_tokens_output == nullptr) {
+    if (runtime == nullptr || tts_text == nullptr || output_wav_path == nullptr || age == nullptr || gender == nullptr || emotion == nullptr || pitch == nullptr || speed == nullptr) {
         return RWKV_ERROR_INVALID_PARAMETERS;
     }
     auto rt = static_cast<class runtime *>(runtime);
     rt->set_is_generating(model_id, true);
     rt->set_stop_signal(model_id, false);
     std::thread generation_thread([=]() {
-        std::vector<int> global_tokens_vec;
-        int ret = rt->run_spark_tts_with_properties_streaming(model_id, tts_text, output_wav_path, age, gender, emotion, pitch, speed, global_tokens_vec);
-        if (ret == RWKV_SUCCESS) {
-            memcpy(global_tokens_output, global_tokens_vec.data(), 32 * sizeof(int));
-        }
+        int ret = rt->run_spark_tts_with_properties_streaming(model_id, tts_text, output_wav_path, age, gender, emotion, pitch, speed);
         return ret;
     });
 
@@ -621,6 +617,18 @@ struct tts_streaming_buffer rwkvmobile_runtime_get_tts_streaming_buffer(rwkvmobi
     ret.length = 0;
 #endif
     return ret;
+}
+
+const int * rwkvmobile_runtime_get_tts_global_tokens_output(rwkvmobile_runtime_t runtime) {
+#if ENABLE_TTS
+    if (runtime == nullptr) {
+        return nullptr;
+    }
+    auto rt = static_cast<class runtime *>(runtime);
+    return rt->tts_get_global_tokens_output().data();
+#else
+    return nullptr;
+#endif
 }
 
 int rwkvmobile_runtime_tts_register_text_normalizer(rwkvmobile_runtime_t runtime, const char * path) {
