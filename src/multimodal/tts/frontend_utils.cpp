@@ -256,6 +256,8 @@ std::vector<std::string> process_text(
     } else {
         // TODO: add english inflect parser or use other method to spell out number
         // processed_text = spell_out_number(processed_text, inflect_parser);
+        processed_text = replace_text(processed_text, "°F", " degrees Fahrenheit");
+        processed_text = replace_text(processed_text, "°C", " degrees Celsius");
     }
     return split_paragraph(processed_text, tokenize, is_chinese, token_max_n, token_min_n, merge_len, comma_split);
 }
