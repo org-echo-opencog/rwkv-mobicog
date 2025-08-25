@@ -153,7 +153,7 @@ if (ENABLE_MNN_BACKEND)
     option(MNN_USE_SYSTEM_LIB "" ON)
     option(MNN_BUILD_TOOLS "" OFF)
     FetchContent_MakeAvailable(mnn)
-    target_compile_definitions(mnn PUBLIC _DISABLE_CONSTEXPR_MUTEX_CONSTRUCTOR)
+    target_compile_definitions(MNN PUBLIC _DISABLE_CONSTEXPR_MUTEX_CONSTRUCTOR)
 endif()
 
 if (ENABLE_LLAMACPP_BACKEND)
@@ -278,7 +278,7 @@ add_library(rwkv_mobile_internal STATIC ${RWKV_MOBILE_SRCS})
 target_include_directories(rwkv_mobile_internal PUBLIC src)
 
 if (WIN32)
-    target_compile_definitions(rwkv_mobile_internal PRIVATE _DISABLE_CONSTEXPR_MUTEX_CONSTRUCTOR)
+    target_compile_definitions(rwkv_mobile_internal PUBLIC _DISABLE_CONSTEXPR_MUTEX_CONSTRUCTOR)
 endif()
 
 if (ENABLE_WHISPER OR ENABLE_TTS)
