@@ -153,6 +153,7 @@ if (ENABLE_MNN_BACKEND)
     option(MNN_USE_SYSTEM_LIB "" ON)
     option(MNN_BUILD_TOOLS "" OFF)
     FetchContent_MakeAvailable(mnn)
+    target_compile_definitions(mnn PUBLIC _DISABLE_CONSTEXPR_MUTEX_CONSTRUCTOR)
 endif()
 
 if (ENABLE_LLAMACPP_BACKEND)
