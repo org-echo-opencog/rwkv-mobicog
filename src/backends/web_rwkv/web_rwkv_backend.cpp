@@ -38,7 +38,7 @@ int web_rwkv_backend::load_model(std::string model_path) {
         || model_path.find("0.4B") != std::string::npos
         || model_path.find("0.1b") != std::string::npos
         || model_path.find("0.4b") != std::string::npos) {
-            load(model_path.c_str(), 0, 0, 0, use_fp16);
+            load(model_path.c_str(), 999, 0, 0, use_fp16);
         } else {
             load(model_path.c_str(), 0, 999, 0, use_fp16);
         }

@@ -21,7 +21,11 @@ int mnn_rwkv_backend::init(void * extra) {
 int mnn_rwkv_backend::load_model(std::string model_path) {
     interpreter = MNN::Interpreter::createFromFile(model_path.c_str());
     MNN::ScheduleConfig config;
+#ifdef PLATFORM_IS_IOS
+    config.type = MNN_FORWARD_NN;
+#else
     config.type = MNN_FORWARD_CPU;
+#endif
     MNN::BackendConfig backendConfig;
     backendConfig.memory = MNN::BackendConfig::Memory_Low;
     backendConfig.power = MNN::BackendConfig::Power_High;
