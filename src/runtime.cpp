@@ -1407,7 +1407,7 @@ int runtime::run_spark_tts_with_global_tokens_streaming(int model_id, std::strin
     );
 #endif
 
-    _tts_output_samples_buffer.clear();
+    tts_clear_streaming_buffer();
     auto total_start = std::chrono::high_resolution_clock::now();
 
     // variables between threads
@@ -1477,7 +1477,7 @@ int runtime::run_spark_tts_with_global_tokens_streaming(int model_id, std::strin
 
     double ttfa = 0.0;
     std::thread detokenize_thread([&]() {
-        tts_detokenize_thread_main(_sparktts.get(), _tts_output_samples_buffer, global_tokens, output_tokens, generation_finished, ttfa, total_start);
+        tts_detokenize_thread_main(_sparktts.get(), this, global_tokens, output_tokens, generation_finished, ttfa, total_start);
     });
 
     llm_inference_thread.join();
