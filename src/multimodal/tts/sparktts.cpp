@@ -77,6 +77,8 @@ bool sparktts::load_models(std::string wav2vec2_model_path, std::string bicodec_
         auto cpu_groups = get_cpu_groups();
         // use second group
         conf.numThread = cpu_groups[1].ids.size();
+#elif defined(PLATFORM_IS_IOS)
+        conf.numThread = 2;
 #else
         conf.numThread = 4;
 #endif

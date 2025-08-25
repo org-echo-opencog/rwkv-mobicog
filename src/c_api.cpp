@@ -544,6 +544,7 @@ int rwkvmobile_runtime_run_spark_tts_streaming_async(rwkvmobile_runtime_t runtim
         return RWKV_ERROR_INVALID_PARAMETERS;
     }
     auto rt = static_cast<class runtime *>(runtime);
+    rt->tts_clear_streaming_buffer();
     rt->set_is_generating(model_id, true);
     rt->set_stop_signal(model_id, false);
     std::string prompt_audio_text_str;
@@ -570,6 +571,7 @@ int rwkvmobile_runtime_run_spark_tts_with_global_tokens_streaming_async(rwkvmobi
         return RWKV_ERROR_INVALID_PARAMETERS;
     }
     auto rt = static_cast<class runtime *>(runtime);
+    rt->tts_clear_streaming_buffer();
     rt->set_is_generating(model_id, true);
     rt->set_stop_signal(model_id, false);
     std::vector<int> global_tokens_vec(global_tokens, global_tokens + 32);
@@ -591,6 +593,7 @@ int rwkvmobile_runtime_run_spark_tts_with_properties_streaming_async(rwkvmobile_
         return RWKV_ERROR_INVALID_PARAMETERS;
     }
     auto rt = static_cast<class runtime *>(runtime);
+    rt->tts_clear_streaming_buffer();
     rt->set_is_generating(model_id, true);
     rt->set_stop_signal(model_id, false);
     std::thread generation_thread([=]() {

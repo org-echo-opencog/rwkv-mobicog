@@ -457,6 +457,10 @@ if (BUILD_STATIC_LIB)
     target_include_directories(rwkv_mobile_static PUBLIC src)
     target_link_libraries(rwkv_mobile_static PRIVATE rwkv_mobile_internal)
 
+    if (IOS)
+        target_compile_definitions(rwkv_mobile_static PUBLIC PLATFORM_IS_IOS)
+    endif()
+
     set (STATIC_LIBS_LIST $<TARGET_FILE:rwkv_mobile_static> $<TARGET_FILE:rwkv_mobile_internal>)
 
     if (ENABLE_WEBRWKV_BACKEND)

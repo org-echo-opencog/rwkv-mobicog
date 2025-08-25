@@ -151,6 +151,10 @@ public:
         return _tts_output_samples_buffer;
     }
 
+    void tts_clear_streaming_buffer() {
+        _tts_output_samples_buffer.clear();
+    }
+
     int tts_register_text_normalizer(std::string path) {
 #if !defined(_WIN32)
         if (!std::ifstream(path).good()) {
