@@ -251,17 +251,17 @@ if (ENABLE_WHISPER OR ENABLE_TTS)
     set(EIGEN_BUILD_DOC OFF)
     FetchContent_MakeAvailable(Eigen)
 
-    FetchContent_Declare(
-        kaldi_native_fbank
-        GIT_REPOSITORY https://github.com/csukuangfj/kaldi-native-fbank/
-        GIT_TAG v1.21.1
-    )
-    option(KALDI_NATIVE_FBANK_BUILD_PYTHON "" OFF)
-    option(KALDI_NATIVE_FBANK_BUILD_TESTS "" OFF)
-    set(BUILD_SHARED_LIBS_BACKUP ${BUILD_SHARED_LIBS})
-    set(BUILD_SHARED_LIBS OFF)
-    FetchContent_MakeAvailable(kaldi_native_fbank)
-    set(BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS_BACKUP})
+    # FetchContent_Declare(
+    #     kaldi_native_fbank
+    #     GIT_REPOSITORY https://github.com/csukuangfj/kaldi-native-fbank/
+    #     GIT_TAG v1.21.1
+    # )
+    # option(KALDI_NATIVE_FBANK_BUILD_PYTHON "" OFF)
+    # option(KALDI_NATIVE_FBANK_BUILD_TESTS "" OFF)
+    # set(BUILD_SHARED_LIBS_BACKUP ${BUILD_SHARED_LIBS})
+    # set(BUILD_SHARED_LIBS OFF)
+    # FetchContent_MakeAvailable(kaldi_native_fbank)
+    # set(BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS_BACKUP})
 endif()
 
 if (ENABLE_COREML_BACKEND)
@@ -286,23 +286,23 @@ if (ENABLE_WHISPER OR ENABLE_TTS)
     if (ENABLE_TTS)
         if (NOT WIN32)
             target_link_libraries(rwkv_mobile_internal PUBLIC
-                $<TARGET_OBJECTS:kaldi-native-fbank-core>
+                # $<TARGET_OBJECTS:kaldi-native-fbank-core>
                 $<TARGET_OBJECTS:kaldifst_core>
                 $<TARGET_OBJECTS:fst>
             )
 
             target_include_directories(rwkv_mobile_internal PUBLIC
-                ${kaldi_native_fbank_SOURCE_DIR}
+                # ${kaldi_native_fbank_SOURCE_DIR}
                 ${openfst_SOURCE_DIR}/src/include
                 ${kaldifst_SOURCE_DIR}
             )
-        else()
-            target_link_libraries(rwkv_mobile_internal PUBLIC
-                $<TARGET_OBJECTS:kaldi-native-fbank-core>
-            )
-            target_include_directories(rwkv_mobile_internal PUBLIC
-                ${kaldi_native_fbank_SOURCE_DIR}
-            )
+        # else()
+            # target_link_libraries(rwkv_mobile_internal PUBLIC
+            #     $<TARGET_OBJECTS:kaldi-native-fbank-core>
+            # )
+            # target_include_directories(rwkv_mobile_internal PUBLIC
+            #     ${kaldi_native_fbank_SOURCE_DIR}
+            # )
         endif()
     endif()
     target_include_directories(rwkv_mobile_internal PUBLIC ${Eigen_SOURCE_DIR}
@@ -486,7 +486,7 @@ if (BUILD_STATIC_LIB)
 
     if (ENABLE_WHISPER OR ENABLE_TTS)
         set (STATIC_LIBS_LIST ${STATIC_LIBS_LIST}
-            $<TARGET_FILE:kaldi-native-fbank-core>
+            # $<TARGET_FILE:kaldi-native-fbank-core>
             $<TARGET_FILE:kaldifst_core>
             $<TARGET_FILE:fst>
         )
