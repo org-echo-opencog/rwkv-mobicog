@@ -151,9 +151,17 @@ public:
         return _tts_output_samples_buffer;
     }
 
+    void tts_append_samples_to_buffer(std::vector<float>::iterator samples_begin, std::vector<float>::iterator samples_end) {
+        std::lock_guard<std::mutex> lock(_tts_streaming_buffer_mutex);
+        _tts_output_samples_buffer.insert(_tts_output_samples_buffer.end(), samples_begin, samples_end);
+    }
+
     void tts_clear_streaming_buffer() {
+        std::lock_guard<std::mutex> lock(_tts_streaming_buffer_mutex);
         _tts_output_samples_buffer.clear();
     }
+
+    std::mutex _tts_streaming_buffer_mutex;
 
     int tts_register_text_normalizer(std::string path) {
 #if !defined(_WIN32)

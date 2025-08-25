@@ -612,14 +612,35 @@ struct tts_streaming_buffer rwkvmobile_runtime_get_tts_streaming_buffer(rwkvmobi
     struct tts_streaming_buffer ret;
 #if ENABLE_TTS
     auto rt = static_cast<class runtime *>(runtime);
+    std::lock_guard<std::mutex> lock(rt->_tts_streaming_buffer_mutex);
     auto buffer = rt->tts_get_streaming_buffer();
-    ret.samples = buffer.data();
+    ret.samples = new float[buffer.size()];
+    memcpy(ret.samples, buffer.data(), buffer.size() * sizeof(float));
     ret.length = buffer.size();
 #else
     ret.samples = nullptr;
     ret.length = 0;
 #endif
     return ret;
+}
+
+int rwkvmobile_runtime_get_tts_streaming_buffer_length(rwkvmobile_runtime_t runtime) {
+#if ENABLE_TTS
+    if (runtime == nullptr) {
+        return 0;
+    }
+    auto rt = static_cast<class runtime *>(runtime);
+    return rt->tts_get_streaming_buffer().size();
+#else
+    return 0;
+#endif
+}
+
+void rwkvmobile_runtime_free_tts_streaming_buffer(struct tts_streaming_buffer buffer) {
+    if (buffer.samples == nullptr) {
+        return;
+    }
+    delete[] buffer.samples;
 }
 
 const int * rwkvmobile_runtime_get_tts_global_tokens_output(rwkvmobile_runtime_t runtime) {

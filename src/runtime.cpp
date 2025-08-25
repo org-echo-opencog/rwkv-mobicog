@@ -820,7 +820,7 @@ int generate_tts_output(
 
 void tts_detokenize_thread_main(
     sparktts* sparktts_instance,
-    std::vector<float>& tts_output_samples_buffer,
+    runtime* rt,
     const std::vector<int>& global_tokens,
     const std::vector<int>& output_tokens,
     const bool& generation_finished,
@@ -840,12 +840,13 @@ void tts_detokenize_thread_main(
             current_semantic_tokens.insert(current_semantic_tokens.end(), current_chunk_tokens.begin(), current_chunk_tokens.end());
             semantic_tokens_buf = std::vector<int>(current_semantic_tokens.begin() + (current_semantic_tokens.size() - sparktts_instance->overlap_size), current_semantic_tokens.end());
             auto new_samples = sparktts_instance->detokenize_audio(global_tokens, current_semantic_tokens);
-            if (tts_output_samples_buffer.empty()) {
+            if (rt->tts_get_streaming_buffer().empty()) {
                 ttfa = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - total_start).count();
                 actual_chunk_size = sparktts_instance->chunk_size;
                 sparktts_instance->resize_detokenizer_model(actual_chunk_size);
             }
-            tts_output_samples_buffer.insert(tts_output_samples_buffer.end(), new_samples.begin() + (16000 * buffered_size / 50), new_samples.end());
+            // tts_output_samples_buffer.insert(tts_output_samples_buffer.end(), new_samples.begin() + (16000 * buffered_size / 50), new_samples.end());
+            rt->tts_append_samples_to_buffer(new_samples.begin() + (16000 * buffered_size / 50), new_samples.end());
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
@@ -855,7 +856,8 @@ void tts_detokenize_thread_main(
         std::vector<int> current_semantic_tokens = semantic_tokens_buf;
         current_semantic_tokens.insert(current_semantic_tokens.end(), current_chunk_tokens.begin(), current_chunk_tokens.end());
         auto new_samples = sparktts_instance->detokenize_audio(global_tokens, current_semantic_tokens);
-        tts_output_samples_buffer.insert(tts_output_samples_buffer.end(), new_samples.begin() + (16000 * buffered_size / 50), new_samples.end());
+        // tts_output_samples_buffer.insert(tts_output_samples_buffer.end(), new_samples.begin() + (16000 * buffered_size / 50), new_samples.end());
+        rt->tts_append_samples_to_buffer(new_samples.begin() + (16000 * buffered_size / 50), new_samples.end());
     }
 }
 } // anonymous namespace
@@ -1114,7 +1116,7 @@ int runtime::run_spark_tts_zeroshot_streaming(int model_id, std::string tts_text
     );
 #endif
 
-    _tts_output_samples_buffer.clear();
+    tts_clear_streaming_buffer();
     auto total_start = std::chrono::high_resolution_clock::now();
     std::vector<int> global_tokens;
     std::vector<int> semantic_tokens;
@@ -1204,7 +1206,7 @@ int runtime::run_spark_tts_zeroshot_streaming(int model_id, std::string tts_text
 
     double ttfa = 0.0;
     std::thread detokenize_thread([&]() {
-        tts_detokenize_thread_main(_sparktts.get(), _tts_output_samples_buffer, global_tokens, output_tokens, generation_finished, ttfa, total_start);
+        tts_detokenize_thread_main(_sparktts.get(), this, global_tokens, output_tokens, generation_finished, ttfa, total_start);
     });
 
     llm_inference_thread.join();
@@ -1249,7 +1251,7 @@ int runtime::run_spark_tts_with_properties_streaming(int model_id, std::string t
     );
 #endif
 
-    _tts_output_samples_buffer.clear();
+    tts_clear_streaming_buffer();
     auto total_start = std::chrono::high_resolution_clock::now();
     std::vector<int> global_tokens;
     std::vector<int> properties_tokens = convert_standard_properties_to_tokens(age, gender, emotion, pitch, speed);
@@ -1360,7 +1362,7 @@ int runtime::run_spark_tts_with_properties_streaming(int model_id, std::string t
 
     double ttfa = 0.0;
     std::thread detokenize_thread([&]() {
-        tts_detokenize_thread_main(_sparktts.get(), _tts_output_samples_buffer, global_tokens, output_tokens, generation_finished, ttfa, total_start);
+        tts_detokenize_thread_main(_sparktts.get(), this, global_tokens, output_tokens, generation_finished, ttfa, total_start);
     });
 
     llm_inference_thread.join();

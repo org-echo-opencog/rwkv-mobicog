@@ -153,6 +153,10 @@ int rwkvmobile_runtime_run_spark_tts_with_properties_streaming_async(rwkvmobile_
 
 struct tts_streaming_buffer rwkvmobile_runtime_get_tts_streaming_buffer(rwkvmobile_runtime_t runtime);
 
+int rwkvmobile_runtime_get_tts_streaming_buffer_length(rwkvmobile_runtime_t runtime);
+
+void rwkvmobile_runtime_free_tts_streaming_buffer(struct tts_streaming_buffer buffer);
+
 const int * rwkvmobile_runtime_get_tts_global_tokens_output(rwkvmobile_runtime_t runtime);
 
 int rwkvmobile_runtime_tts_register_text_normalizer(rwkvmobile_runtime_t runtime, const char * path);
