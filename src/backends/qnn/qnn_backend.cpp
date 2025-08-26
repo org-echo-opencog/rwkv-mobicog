@@ -882,10 +882,12 @@ int qnn_backend::load_model(std::string model_path) {
     }
 
 
+#ifndef _WIN32
     if (rmpack != nullptr) {
         int use_external_deep_embedding = rmpack->getConfig()["use_external_deep_embedding"];
         has_deep_embedding = use_external_deep_embedding != 0;
     }
+#endif
 
     if (RWKV_SUCCESS != qnn_initialize_tensors()) {
         LOGE("Could not initialize tensors");
