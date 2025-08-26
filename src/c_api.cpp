@@ -715,23 +715,32 @@ void rwkvmobile_set_cache_dir(rwkvmobile_runtime_t runtime, const char * cache_d
     rt->set_cache_dir(std::string(cache_dir));
 }
 
-    int rwkvmobile_load_embedding_model(rwkvmobile_runtime_t runtime, const char *model_path) {
+int rwkvmobile_load_embedding_model(rwkvmobile_runtime_t runtime, const char *model_path) {
+#ifdef ENABLE_LLAMACPP
     if (runtime == nullptr || model_path == nullptr) {
         return RWKV_ERROR_INVALID_PARAMETERS;
     }
     auto rt = static_cast<class runtime *>(runtime);
     return rt->load_embedding_model(model_path);
+#else
+    return RWKV_ERROR_UNSUPPORTED;
+#endif
 }
 
 int rwkvmobile_load_rerank_model(rwkvmobile_runtime_t runtime, const char *model_path) {
+#ifdef ENABLE_LLAMACPP
     if (runtime == nullptr || model_path == nullptr) {
         return RWKV_ERROR_INVALID_PARAMETERS;
     }
     auto rt = static_cast<class runtime *>(runtime);
     return rt->load_rerank_model(model_path);
+#else
+    return RWKV_ERROR_UNSUPPORTED;
+#endif
 }
 
 int rwkvmobile_get_embedding(rwkvmobile_runtime_t runtime, const char **input, const int input_length, float **embedding) {
+#ifdef ENABLE_LLAMACPP
     if (runtime == nullptr || input == nullptr || embedding == nullptr) {
         return RWKV_ERROR_INVALID_PARAMETERS;
     }
@@ -747,6 +756,9 @@ int rwkvmobile_get_embedding(rwkvmobile_runtime_t runtime, const char **input, c
     }
     memcpy(embedding, ebd.data(), ebd[0].size() * ebd.size() * sizeof(float));
     return 0;
+#else
+    return RWKV_ERROR_UNSUPPORTED;
+#endif
 }
 
 int rwkvmobile_runtime_get_loaded_model_ids(rwkvmobile_runtime_t handle, int * model_ids, int max_count) {

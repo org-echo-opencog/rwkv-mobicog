@@ -1804,10 +1804,12 @@ void runtime::backend_set_extra_str(int model_id, std::string str) {
 
 int runtime::release() {
     _models.clear();
+#ifdef ENABLE_LLAMACPP
     if (_embedding) {
         _embedding->release();
         _embedding = nullptr;
     }
+#endif
 #ifdef ENABLE_TTS
     if (_sparktts) {
         _sparktts = nullptr;

@@ -14,7 +14,9 @@
 #include "soc_detect.h"
 
 #include "logger.h"
+#ifdef ENABLE_LLAMACPP
 #include "embedding/rwkv_embedding.h"
+#endif
 #include "multimodal/multimodal_encoder.h"
 
 #ifdef ENABLE_TTS
@@ -233,6 +235,7 @@ public:
     double get_avg_prefill_speed(int model_id);
     double get_prefill_progress(int model_id);
 
+#ifdef ENABLE_LLAMACPP
     int load_embedding_model(std::string model_path) {
         if (_embedding == nullptr) {
             _embedding = std::make_unique<rwkv_embedding>();
@@ -271,6 +274,7 @@ public:
         }
         return _embedding->rerank(query, chunks);
     }
+#endif
 
     // platform info
     const char * get_platform_name() {
@@ -323,7 +327,9 @@ private:
     std::map<int, std::unique_ptr<ModelInstance>> _models;
     int _next_model_id = 0;
 
+#ifdef ENABLE_LLAMACPP
     std::unique_ptr<rwkv_embedding> _embedding;
+#endif
 
     double _prefill_speed = -1;
     double _decode_speed = -1;
