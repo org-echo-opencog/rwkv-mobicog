@@ -228,7 +228,6 @@ qnn_backend_context::qnn_backend_context(std::string qnnBackendPath) : qnnBacken
 qnn_backend_context::~qnn_backend_context() {
     qnn_destory_power_config_id();
 
-
     if (nullptr != qnnFunctionPointers.qnnInterface.propertyHasCapability) {
         auto qnnDevicePropertyStatus = qnnFunctionPointers.qnnInterface.propertyHasCapability(QNN_PROPERTY_GROUP_DEVICE);
         if (QNN_PROPERTY_NOT_SUPPORTED == qnnDevicePropertyStatus) {
@@ -882,6 +881,12 @@ int qnn_backend::load_model(std::string model_path) {
 
     }
 
+
+    if (rmpack != nullptr) {
+        int use_external_deep_embedding = rmpack->getConfig()["use_external_deep_embedding"];
+        has_deep_embedding = use_external_deep_embedding != 0;
+    }
+
     if (RWKV_SUCCESS != qnn_initialize_tensors()) {
         LOGE("Could not initialize tensors");
         return RWKV_ERROR_MODEL;
@@ -936,6 +941,46 @@ int qnn_backend::load_model(std::string model_path) {
                 LOGI("External embeddings loaded");
             } else {
                 LOGE("Failed to load external embedding");
+                return RWKV_ERROR_MODEL;
+            }
+        }
+
+        if (has_deep_embedding) {
+            // let's assert that the embedding dtype is the same as the input tensor dtype
+            deep_embedding_size = rmpack->getConfig()["deep_embedding_size"];
+            std::string deep_embedding_dtype = rmpack->getConfig()["external_deep_embedding_dtype"];
+            if (deep_embedding_dtype == "fp16" || deep_embedding_dtype == "uint16") {
+                deep_embeddings_elembytes = 2;
+            } else if (deep_embedding_dtype == "fp32" || deep_embedding_dtype == "uint32") {
+                deep_embeddings_elembytes = 4;
+            } else {
+                LOGE("Unsupported deep embedding dtype: %s", deep_embedding_dtype.c_str());
+                return RWKV_ERROR_MODEL;
+            }
+            try {
+#if USE_MMAP
+                external_deep_embeddings = std::shared_ptr<uint8_t>(
+                    (uint8_t*)rmpack->mmapFile("deep_embedding"),
+                    [this](uint8_t* p) {
+                        rmpack->unmapFile("deep_embedding");
+                    }
+                );
+#else
+                external_deep_embeddings = std::shared_ptr<uint8_t>(
+                    (uint8_t*)rmpack->readFileToMemory("deep_embedding"),
+                    [this](uint8_t* p) {
+                        rmpack->freeMemory("deep_embedding");
+                    }
+                );
+#endif
+            } catch (const std::exception& e) {
+                LOGE("Failed to load external deep embedding: %s", e.what());
+                return RWKV_ERROR_MODEL;
+            }
+            if (external_deep_embeddings != nullptr) {
+                LOGI("External deep embeddings loaded");
+            } else {
+                LOGE("Failed to load external deep embedding");
                 return RWKV_ERROR_MODEL;
             }
         }
@@ -1117,6 +1162,18 @@ int qnn_backend::qnn_initialize_tensors() {
                     return RWKV_ERROR_IO;
                 }
             }
+
+            // map deep embedding tensors
+            if (has_deep_embedding) {
+                for (size_t i = 0; i < graphInfo.numInputTensors; i++) {
+                    auto tensorName = std::string(QNN_TENSOR_GET_NAME(graphInfo.inputTensors[i]));
+                    if (tensorName.find("s_emb") != std::string::npos) {
+                        int layer_id = std::stoi(tensorName.substr(5, tensorName.find("_in") - 5));
+                        LOGI("Found Deep embedding tensor %s", ("s_emb" + std::to_string(layer_id) + "_in").c_str());
+                        deepEmbeddingTensors[layer_id] = (Qnn_Tensor_t*)decodeGraphsTensorNameToTensorPointer[graph_id][tensorName];
+                    }
+                }
+            }
         }
 
         if (qnnPrefillGraphsCount > 0) {
@@ -1186,6 +1243,17 @@ int qnn_backend::qnn_initialize_tensors() {
                     return RWKV_ERROR_IO;
                 }
 
+                // map deep embedding tensors
+                if (has_deep_embedding) {
+                    for (size_t i = 0; i < graphInfo.numInputTensors; i++) {
+                        auto tensorName = std::string(QNN_TENSOR_GET_NAME(graphInfo.inputTensors[i]));
+                        if (tensorName.find("s_emb") != std::string::npos) {
+                            int layer_id = std::stoi(tensorName.substr(5, tensorName.find("_in") - 5));
+                            LOGI("Found Deep embedding tensor %s", ("s_emb" + std::to_string(layer_id) + "_in_prefill").c_str());
+                            deepEmbeddingPrefillTensors[layer_id] = (Qnn_Tensor_t*)prefillGraphsTensorNameToTensorPointer[graph_id][tensorName];
+                        }
+                    }
+                }
             }
 
             Qnn_Tensor_t *tensor = nullptr;
@@ -1291,6 +1359,18 @@ int qnn_backend::qnn_initialize_tensors() {
                     LOGE("Error in setting up Input Tensors");
                     return RWKV_ERROR_IO;
                 }
+
+                // map deep embedding tensors
+                if (has_deep_embedding) {
+                    for (size_t i = 0; i < graphInfo.numInputTensors; i++) {
+                        auto tensorName = std::string(QNN_TENSOR_GET_NAME(graphInfo.inputTensors[i]));
+                        if (tensorName.find("s_emb") != std::string::npos) {
+                            int layer_id = std::stoi(tensorName.substr(5, tensorName.find("_in") - 5));
+                            LOGI("Found Deep embedding tensor %s", ("s_emb" + std::to_string(layer_id) + "_in").c_str());
+                            deepEmbeddingTensors[layer_id] = (Qnn_Tensor_t*)embdGraphsTensorNameToTensorPointer[graph_id][tensorName];
+                        }
+                    }
+                }
             }
 
             Qnn_Tensor_t *tensor = nullptr;
@@ -1371,6 +1451,17 @@ int qnn_backend::qnn_initialize_tensors() {
                     return RWKV_ERROR_IO;
                 }
 
+                // map deep embedding tensors
+                if (has_deep_embedding) {
+                    for (size_t i = 0; i < graphInfo.numInputTensors; i++) {
+                        auto tensorName = std::string(QNN_TENSOR_GET_NAME(graphInfo.inputTensors[i]));
+                        if (tensorName.find("s_emb") != std::string::npos) {
+                            int layer_id = std::stoi(tensorName.substr(5, tensorName.find("_in") - 5));
+                            LOGI("Found Deep embedding tensor %s", ("s_emb" + std::to_string(layer_id) + "_in_prefill").c_str());
+                            deepEmbeddingPrefillTensors[layer_id] = (Qnn_Tensor_t*)embdPrefillGraphsTensorNameToTensorPointer[graph_id][tensorName];
+                        }
+                    }
+                }
             }
 
             Qnn_Tensor_t *tensor = nullptr;
@@ -1554,6 +1645,46 @@ int qnn_backend::post_graph_execute(float *& logits) {
     return RWKV_SUCCESS;
 }
 
+int qnn_backend::copy_deep_embedding_to_qnn_tensor_decode(int idx) {
+    // [vocab_size, n_layers * deep_embedding_size]
+    if (external_deep_embeddings == nullptr) {
+        LOGE("external_deep_embeddings is not loaded");
+        return RWKV_ERROR_IO;
+    }
+
+    size_t token_offset = idx * n_layers * deep_embedding_size;
+    for (int i = 0; i < n_layers; i++) {
+        if (deepEmbeddingTensors.find(i) == deepEmbeddingTensors.end()) {
+            LOGE("Failed to get deepembedding tensor %s", ("s_emb" + std::to_string(i) + "_in").c_str());
+            return RWKV_ERROR_IO;
+        }
+        void *ptr = qnnIOTensorUtils->getBuffer(deepEmbeddingTensors[i]);
+        size_t deep_embedding_offset = (token_offset + i * deep_embedding_size) * deep_embeddings_elembytes;
+        memcpy(ptr, external_deep_embeddings.get() + deep_embedding_offset, deep_embedding_size * deep_embeddings_elembytes);
+    }
+    return RWKV_SUCCESS;
+}
+
+int qnn_backend::copy_deep_embedding_to_qnn_tensor_prefill(int idx, int dst_offset) {
+    // [vocab_size, n_layers * deep_embedding_size]
+    if (external_deep_embeddings == nullptr) {
+        LOGE("external_deep_embeddings is not loaded");
+        return RWKV_ERROR_IO;
+    }
+
+    size_t token_offset = idx * n_layers * deep_embedding_size;
+    for (int j = 0; j < n_layers; j++) {
+        if (deepEmbeddingPrefillTensors.find(j) == deepEmbeddingPrefillTensors.end()) {
+            LOGE("Failed to get deepembedding tensor %s", ("s_emb" + std::to_string(j) + "_in_prefill").c_str());
+            return RWKV_ERROR_IO;
+        }
+        uint8_t *ptr = (uint8_t*)qnnIOTensorUtils->getBuffer(deepEmbeddingPrefillTensors[j]) + dst_offset * deep_embedding_size * deep_embeddings_elembytes;
+        size_t deep_embedding_offset = (token_offset + j * deep_embedding_size) * deep_embeddings_elembytes;
+        memcpy(ptr, external_deep_embeddings.get() + deep_embedding_offset, deep_embedding_size * deep_embeddings_elembytes);
+    }
+    return RWKV_SUCCESS;
+}
+
 int qnn_backend::eval(int id, float *& logits) {
     {
         std::lock_guard<std::mutex> lock(g_qnn_backend_context_ptr->qnnMutex);
@@ -1582,6 +1713,12 @@ int qnn_backend::eval(int id, float *& logits) {
             uint16_t *emb_ptr = (uint16_t*)external_embeddings.get();
             memcpy(buffer, emb_ptr + hidden_size * id, hidden_size * sizeof(uint16_t));
 
+            if (has_deep_embedding) {
+                if (RWKV_SUCCESS != copy_deep_embedding_to_qnn_tensor_decode(id)) {
+                    return RWKV_ERROR_EVAL;
+                }
+            }
+
             if (RWKV_SUCCESS != execute_emb_decode_graph()) {
                 return RWKV_ERROR_EVAL;
             }
@@ -1592,6 +1729,12 @@ int qnn_backend::eval(int id, float *& logits) {
                 return RWKV_ERROR_IO;
             }
             *token_input = id;
+
+            if (has_deep_embedding) {
+                if (RWKV_SUCCESS != copy_deep_embedding_to_qnn_tensor_decode(id)) {
+                    return RWKV_ERROR_EVAL;
+                }
+            }
 
             if (RWKV_SUCCESS != execute_decode_graph()) {
                 return RWKV_ERROR_EVAL;
@@ -1604,7 +1747,7 @@ int qnn_backend::eval(int id, float *& logits) {
 
 int qnn_backend::eval(std::vector<int> ids, float *& logits, bool skip_logits_copy) {
     {
-        std::lock_guard<std::mutex> lock(g_qnn_backend_context_ptr->qnnMutex);
+        // std::lock_guard<std::mutex> lock(g_qnn_backend_context_ptr->qnnMutex);
         if (ids.empty()) return RWKV_ERROR_EVAL;
 
         if (tokenInputTensor == nullptr) {
@@ -1619,15 +1762,23 @@ int qnn_backend::eval(std::vector<int> ids, float *& logits, bool skip_logits_co
             }
 
             int idx = 0;
+            uint16_t *buffer = (uint16_t*)qnnIOTensorUtils->getBuffer(tokenInputTensorEmbdPrefill);
+            uint16_t *emb_ptr = (uint16_t*)external_embeddings.get();
+            if (buffer == nullptr) {
+                LOGE("Failed to get tokenInputTensorEmbdPrefill");
+                return RWKV_ERROR_IO;
+            }
             for (; idx + embdPrefillSequenceLength <= ids.size(); idx += embdPrefillSequenceLength) {
-                uint16_t *buffer = (uint16_t*)qnnIOTensorUtils->getBuffer(tokenInputTensorEmbdPrefill);
-                if (buffer == nullptr) {
-                    LOGE("Failed to get tokenInputTensorEmbdPrefill");
-                    return RWKV_ERROR_IO;
-                }
-                uint16_t *emb_ptr = (uint16_t*)external_embeddings.get();
                 for (int i = 0; i < embdPrefillSequenceLength; i++) {
-                    memcpy(buffer + i * hidden_size, emb_ptr + hidden_size * ids[idx + i], hidden_size * sizeof(uint16_t));
+                    memcpy(buffer + i * hidden_size, emb_ptr + hidden_size * ids[idx + i], hidden_size * deep_embeddings_elembytes);
+                }
+
+                if (has_deep_embedding) {
+                    for (int i = 0; i < embdPrefillSequenceLength; i++) {
+                        if (RWKV_SUCCESS != copy_deep_embedding_to_qnn_tensor_prefill(ids[idx + i], i)) {
+                            return RWKV_ERROR_EVAL;
+                        }
+                    }
                 }
 
                 if (RWKV_SUCCESS != execute_emb_prefill_graph()) {
@@ -1635,21 +1786,28 @@ int qnn_backend::eval(std::vector<int> ids, float *& logits, bool skip_logits_co
                 }
             }
 
+
+            buffer = (uint16_t*)qnnIOTensorUtils->getBuffer(tokenInputTensorEmbd);
+            if (buffer == nullptr) {
+                LOGE("Failed to get tokenInputTensorEmbd");
+                return RWKV_ERROR_IO;
+            }
             for (; idx < ids.size(); idx++) {
-                uint16_t *buffer = (uint16_t*)qnnIOTensorUtils->getBuffer(tokenInputTensorEmbd);
-                if (buffer == nullptr) {
-                    LOGE("Failed to get tokenInputTensorEmbd");
-                    return RWKV_ERROR_IO;
+                memcpy(buffer, emb_ptr + hidden_size * ids[idx], hidden_size * deep_embeddings_elembytes);
+
+                if (has_deep_embedding) {
+                    if (RWKV_SUCCESS != copy_deep_embedding_to_qnn_tensor_decode(ids[idx])) {
+                        return RWKV_ERROR_EVAL;
+                    }
                 }
-                uint16_t *emb_ptr = (uint16_t*)external_embeddings.get();
-                memcpy(buffer, emb_ptr + hidden_size * ids[idx], hidden_size * sizeof(uint16_t));
 
                 if (RWKV_SUCCESS != execute_emb_decode_graph()) {
                     return RWKV_ERROR_EVAL;
                 }
             }
         } else {
-            if (prefillSequenceLength == 0) {
+            // if (prefillSequenceLength == 0) {
+            if (true) {
                 for (auto id : ids) {
                     if (RWKV_SUCCESS != eval(id, logits)) {
                         return RWKV_ERROR_MODEL;
@@ -1671,6 +1829,14 @@ int qnn_backend::eval(std::vector<int> ids, float *& logits, bool skip_logits_co
                     }
                     // LOGD("Prefilling using seq mode from %d to %d", idx, idx + prefillSequenceLength);
 
+                    if (has_deep_embedding) {
+                        for (int i = 0; i < prefillSequenceLength; i++) {
+                            if (RWKV_SUCCESS != copy_deep_embedding_to_qnn_tensor_prefill(ids[idx + i], i)) {
+                                return RWKV_ERROR_EVAL;
+                            }
+                        }
+                    }
+
                     if (RWKV_SUCCESS != execute_prefill_graph()) {
                         is_prefilling_usable = false;
                         LOGE("QNN: prefill graph not usable; falling back to decode mode");
@@ -1684,13 +1850,20 @@ int qnn_backend::eval(std::vector<int> ids, float *& logits, bool skip_logits_co
                 prefill_speed = (ids.size() / prefillSequenceLength * prefillSequenceLength) * 1000000.0 / std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
 
                 // LOGD("Prefilling tails using decode mode from %d to %d", idx, ids.size());
+                token_input = (int*)qnnIOTensorUtils->getBuffer(tokenInputTensor);
+                if (token_input == nullptr) {
+                    LOGE("Failed to get tokenInputTensor");
+                    return RWKV_ERROR_IO;
+                }
                 for (; idx < ids.size(); idx++) {
-                    token_input = (int*)qnnIOTensorUtils->getBuffer(tokenInputTensor);
-                    if (token_input == nullptr) {
-                        LOGE("Failed to get tokenInputTensor");
-                        return RWKV_ERROR_IO;
-                    }
                     *token_input = ids[idx];
+
+                    if (has_deep_embedding) {
+                        if (RWKV_SUCCESS != copy_deep_embedding_to_qnn_tensor_decode(ids[idx])) {
+                            return RWKV_ERROR_EVAL;
+                        }
+                    }
+
                     if (RWKV_SUCCESS != execute_decode_graph()) {
                         return RWKV_ERROR_EVAL;
                     }

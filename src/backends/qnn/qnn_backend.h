@@ -82,6 +82,10 @@ public:
     int copy_qnn_tensor_to_float(Qnn_Tensor_t *qnn_tensor, float *buffer, size_t element_count);
 
     int post_graph_execute(float *& logits);
+
+    int deep_embedding_size = 0;
+    bool has_deep_embedding = false;
+
 private:
     double prefill_speed = -1;
     void *qnnModelHandle = nullptr;
@@ -140,6 +144,9 @@ private:
     std::vector<std::unordered_map<std::string, void*>> embdPrefillGraphsTensorNameToTensorPointer;
     std::vector<std::unordered_map<std::string, size_t>> embdPrefillGraphsTensorNameToSize;
 
+    std::unordered_map<int, Qnn_Tensor_t*> deepEmbeddingTensors;
+    std::unordered_map<int, Qnn_Tensor_t*> deepEmbeddingPrefillTensors;
+
     std::unordered_map<std::string, void*> stateTensorsNameToTensorPointer;
 
     int qnn_initialize_tensors();
@@ -152,9 +159,14 @@ private:
     int execute_emb_decode_graph();
     int execute_emb_prefill_graph();
 
+    int copy_deep_embedding_to_qnn_tensor_decode(int idx);
+    int copy_deep_embedding_to_qnn_tensor_prefill(int idx, int token_offset);
+
     std::vector<float> logits_buffer;
 
     std::shared_ptr<uint8_t> external_embeddings = nullptr;
+    std::shared_ptr<uint8_t> external_deep_embeddings = nullptr;
+    int deep_embeddings_elembytes = 2;
     std::string external_lmhead_filetype = "None";
 #ifndef _WIN32
     MNN::Interpreter *external_lmhead_interpretor = nullptr;

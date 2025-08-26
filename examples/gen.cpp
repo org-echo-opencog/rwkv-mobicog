@@ -6,6 +6,10 @@
 
 #define ENSURE_SUCCESS_OR_LOG_EXIT(x, msg) if (x != rwkvmobile::RWKV_SUCCESS) { std::cout << msg << std::endl; return 1; }
 
+void callback(const char *msg, const int, const char *next) {
+    std::cout << next;
+}
+
 int main(int argc, char **argv) {
     // set stdout to be unbuffered
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -23,9 +27,11 @@ int main(int argc, char **argv) {
 
     std::cout << "Generating demo text..." << std::endl;
 
-    std::string prompt = "The Eiffel tower is in the city of";
-    ENSURE_SUCCESS_OR_LOG_EXIT(runtime.gen_completion(model_id, prompt, 200, 261, nullptr), "Failed to generate chat message");
-    std::cout << runtime.get_response_buffer_content(model_id);
+    // std::string prompt = "User: Write me a poem about a cat\n\nAssistant:";
+    std::string prompt = "The Eiffel Tower is in the city of";
+    std::cout << prompt;
+    ENSURE_SUCCESS_OR_LOG_EXIT(runtime.gen_completion(model_id, prompt, 1000, 261, callback), "Failed to generate chat message");
+    // std::cout << runtime.get_response_buffer_content(model_id);
 
     std::cout << std::endl;
 
