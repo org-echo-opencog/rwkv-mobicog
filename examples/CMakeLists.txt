@@ -6,6 +6,12 @@ endif()
 add_executable(gen gen.cpp)
 target_link_libraries(gen PUBLIC rwkv_mobile_internal)
 
+add_executable(mmlu mmlu.cpp)
+target_link_libraries(mmlu PUBLIC rwkv_mobile_internal)
+
+add_executable(lambada lambada.cpp)
+target_link_libraries(lambada PUBLIC rwkv_mobile_internal)
+
 add_executable(test_chat test_chat.cpp)
 target_link_libraries(test_chat PUBLIC rwkv_mobile_internal)
 
