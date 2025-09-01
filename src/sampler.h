@@ -24,6 +24,10 @@ public:
 
     int sample(const float* logits, const size_t size, float temperature, int top_k, float top_p);
 
+    std::vector<int> sample_batch(const float* logits, const size_t size, int batch_size);
+
+    std::vector<int> sample_batch(const float* logits, const size_t size, int batch_size, std::vector<float> temperature, std::vector<int> top_k, std::vector<float> top_p);
+
     void set_seed(int seed);
 
     void set_temperature(float temperature) { _temperature = temperature; }

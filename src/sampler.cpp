@@ -74,6 +74,32 @@ int NucleusSampler::sample(const float* logits, const size_t size, float tempera
     return ret;
 }
 
+std::vector<int> NucleusSampler::sample_batch(const float* logits, const size_t size, int batch_size) {
+    return sample_batch(logits, size, batch_size, std::vector<float>(batch_size, _temperature), std::vector<int>(batch_size, _top_k), std::vector<float>(batch_size, _top_p));
+}
+
+std::vector<int> NucleusSampler::sample_batch(const float* logits, const size_t size, int batch_size, std::vector<float> temperature, std::vector<int> top_k, std::vector<float> top_p) {
+    std::vector<int> ret(batch_size);
+
+    if (temperature.size() == 1) {
+        temperature = std::vector<float>(batch_size, temperature[0]);
+    }
+
+    if (top_k.size() == 1) {
+        top_k = std::vector<int>(batch_size, top_k[0]);
+    }
+
+    if (top_p.size() == 1) {
+        top_p = std::vector<float>(batch_size, top_p[0]);
+    }
+
+    #pragma omp parallel for
+    for (int i = 0; i < batch_size; i++) {
+        ret[i] = sample(logits + i * size, size, temperature[i], top_k[i], top_p[i]);
+    }
+    return ret;
+}
+
 void NucleusSampler::set_seed(int seed) {
     _generator.seed(seed);
 }
