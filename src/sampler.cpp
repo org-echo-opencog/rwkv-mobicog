@@ -74,11 +74,11 @@ int NucleusSampler::sample(const float* logits, const size_t size, float tempera
     return ret;
 }
 
-std::vector<int> NucleusSampler::sample_batch(const float* logits, const size_t size, int batch_size) {
-    return sample_batch(logits, size, batch_size, std::vector<float>(batch_size, _temperature), std::vector<int>(batch_size, _top_k), std::vector<float>(batch_size, _top_p));
+std::vector<int> NucleusSampler::sample_batch(const float* logits, const size_t sampling_size, const size_t hstep, int batch_size) {
+    return sample_batch(logits, sampling_size, hstep, batch_size, std::vector<float>(batch_size, _temperature), std::vector<int>(batch_size, _top_k), std::vector<float>(batch_size, _top_p));
 }
 
-std::vector<int> NucleusSampler::sample_batch(const float* logits, const size_t size, int batch_size, std::vector<float> temperature, std::vector<int> top_k, std::vector<float> top_p) {
+std::vector<int> NucleusSampler::sample_batch(const float* logits, const size_t sampling_size, const size_t hstep, int batch_size, std::vector<float> temperature, std::vector<int> top_k, std::vector<float> top_p) {
     std::vector<int> ret(batch_size);
 
     if (temperature.size() == 1) {
@@ -95,7 +95,7 @@ std::vector<int> NucleusSampler::sample_batch(const float* logits, const size_t 
 
     #pragma omp parallel for
     for (int i = 0; i < batch_size; i++) {
-        ret[i] = sample(logits + i * size, size, temperature[i], top_k[i], top_p[i]);
+        ret[i] = sample(logits + i * hstep, sampling_size, temperature[i], top_k[i], top_p[i]);
     }
     return ret;
 }

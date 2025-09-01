@@ -18,6 +18,7 @@ int web_rwkv_backend::load_model(std::string model_path) {
     if (!std::filesystem::exists(model_path)) {
         return RWKV_ERROR_MODEL | RWKV_ERROR_IO;
     }
+    int batch_size = 4;
     bool use_fp16 = true;
     if (model_path.find("respark") != std::string::npos) {
         use_fp16 = false;
@@ -25,22 +26,22 @@ int web_rwkv_backend::load_model(std::string model_path) {
 
     int ret = 0;
     if (model_path.find("prefab") != std::string::npos) {
-        load_prefab(model_path.c_str(), use_fp16);
+        load_prefab(model_path.c_str(), use_fp16, batch_size);
     } else if (model_path.find("ABC") != std::string::npos
         || model_path.find("abc") != std::string::npos
         || model_path.find("MIDI") != std::string::npos
         || model_path.find("midi") != std::string::npos) {
-        load_with_rescale(model_path.c_str(), 0, 0, 0, 999, use_fp16);
+        load_with_rescale(model_path.c_str(), 0, 0, 0, 999, use_fp16, batch_size);
     } else if (model_path.find("extended") != std::string::npos) {
-        load_extended(model_path.c_str(), 0, 0, 999, use_fp16);
+        load_extended(model_path.c_str(), 0, 0, 999, use_fp16, batch_size);
     } else {
         if (model_path.find("0.1B") != std::string::npos
         || model_path.find("0.4B") != std::string::npos
         || model_path.find("0.1b") != std::string::npos
         || model_path.find("0.4b") != std::string::npos) {
-            load(model_path.c_str(), 999, 0, 0, use_fp16);
+            load(model_path.c_str(), 999, 0, 0, use_fp16, batch_size);
         } else {
-            load(model_path.c_str(), 0, 999, 0, use_fp16);
+            load(model_path.c_str(), 0, 999, 0, use_fp16, batch_size);
         }
     }
 
@@ -97,12 +98,12 @@ bool web_rwkv_backend::is_available() {
 }
 
 int web_rwkv_backend::zero_state() {
-    ::clear_state();
+    ::clear_state(0);
     return RWKV_SUCCESS;
 }
 
 int web_rwkv_backend::get_state(std::any &state) {
-    struct StateRaw raw = ::get_state();
+    struct StateRaw raw = ::get_state(0);
     if (!raw.len || !raw.state) {
         return RWKV_ERROR_BACKEND | RWKV_ERROR_INVALID_PARAMETERS;
     }
@@ -123,7 +124,7 @@ int web_rwkv_backend::set_state(std::any state) {
         if (!raw.len || !raw.state) {
             return RWKV_ERROR_BACKEND | RWKV_ERROR_INVALID_PARAMETERS;
         }
-        ::set_state(raw);
+        ::set_state(raw, 0);
         return RWKV_SUCCESS;
     } catch (const std::bad_any_cast& e) {
         return RWKV_ERROR_BACKEND | RWKV_ERROR_INVALID_PARAMETERS;

@@ -83,8 +83,8 @@ if (ENABLE_WEBRWKV_BACKEND)
 
     FetchContent_Declare(
         web_rwkv_ffi
-        GIT_REPOSITORY https://github.com/cryscan/web-rwkv-ffi
-        GIT_TAG main
+        GIT_REPOSITORY https://github.com/MollySophia/web-rwkv-ffi
+        GIT_TAG 1fa08424bb904db667a1bfd7c6fb57bd30cd2c95
     )
     FetchContent_MakeAvailable(web_rwkv_ffi)
 
@@ -182,7 +182,7 @@ if (ENABLE_LLAMACPP_BACKEND)
     FetchContent_Declare(
         llama_cpp
         GIT_REPOSITORY https://github.com/ggml-org/llama.cpp
-        GIT_TAG c8ade30036139e32108fee53d8b7164dbfda4bee
+        GIT_TAG 5d804a4938d896f9089687a8b99911cdb43b0b94
     )
 
     option(LLAMA_STANDALONE "" OFF)
@@ -195,6 +195,8 @@ if (ENABLE_LLAMACPP_BACKEND)
 
     if (APPLE)
         option(GGML_METAL "" ON)
+        option(GGML_NATIVE "" OFF)
+        option(GGML_CPU_ARM_ARCH "" "armv8.6-a")
     endif()
 
     FetchContent_MakeAvailable(llama_cpp)

@@ -89,16 +89,17 @@ int backend_str_to_enum(std::string backend) {
 }
 
 int runtime::load_model(std::string model_path, std::string backend_name, std::string tokenizer_path, void * extra) {
+    int ret_model_id = -1;
     int backend_id = backend_str_to_enum(backend_name);
     if (backend_id < 0) {
         LOGE("Invalid backend name: %s\n", backend_name.c_str());
-        return RWKV_ERROR_BACKEND;
+        return ret_model_id;
     }
 
     auto model_instance = std::make_unique<ModelInstance>();
     if (model_instance == nullptr) {
         LOGE("Failed to allocate memory for model instance\n");
-        return RWKV_ERROR_ALLOC;
+        return ret_model_id;
     }
 
     // 1. Create and initialize backend
@@ -108,7 +109,7 @@ int runtime::load_model(std::string model_path, std::string backend_name, std::s
             [](execution_provider *p) { delete (web_rwkv_backend*)p; });
 #else
         LOGE("WebRWKV backend is not supported on this platform\n");
-        return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
+        return ret_model_id;
 #endif
     } else if (backend_id == RWKV_BACKEND_NCNN) {
 #ifdef ENABLE_NCNN
@@ -116,7 +117,7 @@ int runtime::load_model(std::string model_path, std::string backend_name, std::s
             [](execution_provider *p) { delete (ncnn_rwkv_backend*)p; });
 #else
         LOGE("NCNN backend is not supported on this platform\n");
-        return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
+        return ret_model_id;
 #endif
     } else if (backend_id == RWKV_BACKEND_LLAMACPP) {
 #ifdef ENABLE_LLAMACPP
@@ -124,7 +125,7 @@ int runtime::load_model(std::string model_path, std::string backend_name, std::s
             [](execution_provider *p) { delete (llama_cpp_backend*)p; });
 #else
         LOGE("LLaMa.cpp backend is not supported on this platform\n");
-        return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
+        return ret_model_id;
 #endif
     } else if (backend_id == RWKV_BACKEND_QNN) {
 #ifdef ENABLE_QNN
@@ -132,7 +133,7 @@ int runtime::load_model(std::string model_path, std::string backend_name, std::s
             [](execution_provider *p) { delete (qnn_backend*)p; });
 #else
         LOGE("QNN backend is not supported on this platform\n");
-        return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
+        return ret_model_id;
 #endif
     } else if (backend_id == RWKV_BACKEND_MNN) {
 #ifdef ENABLE_MNN
@@ -140,7 +141,7 @@ int runtime::load_model(std::string model_path, std::string backend_name, std::s
             [](execution_provider *p) { delete (mnn_rwkv_backend*)p; });
 #else
         LOGE("MNN backend is not supported on this platform\n");
-        return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
+        return ret_model_id;
 #endif
     } else if (backend_id == RWKV_BACKEND_COREML) {
 #ifdef ENABLE_COREML
@@ -148,24 +149,24 @@ int runtime::load_model(std::string model_path, std::string backend_name, std::s
             [](execution_provider *p) { delete (coreml_rwkv_backend*)p; });
 #else
         LOGE("CoreML backend is not supported on this platform\n");
-        return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
+        return ret_model_id;
 #endif
     } else {
         LOGE("Unsupported backend: %s\n", backend_name.c_str());
-        return RWKV_ERROR_BACKEND | RWKV_ERROR_UNSUPPORTED;
+        return ret_model_id;
     }
 
     int ret = model_instance->backend->init(extra);
     if (ret) {
         LOGE("Failed to initialize backend: %s, errno = %d\n", backend_name.c_str(), ret);
-        return ret;
+        return ret_model_id;
     }
 
     // 2. Load model
     ret = model_instance->backend->load_model(model_path);
     if (ret) {
         LOGE("Failed to load model from: %s, errno = %d\n", model_path.c_str(), ret);
-        return ret;
+        return ret_model_id;
     }
     LOGI("Loaded model from: %s as model_id = %d\n", model_path.c_str(), _next_model_id);
     LOGI("Model num_layers: %d, num_heads: %d, hidden_size: %d, vocab_size: %d\n",
@@ -177,26 +178,29 @@ int runtime::load_model(std::string model_path, std::string backend_name, std::s
         model_instance->tokenizer = std::unique_ptr<tokenizer_base, std::function<void(tokenizer_base*)>>(new trie_tokenizer,
             [](tokenizer_base *p) { delete (trie_tokenizer*)p; });
         if (model_instance->tokenizer == nullptr) {
-            return RWKV_ERROR_TOKENIZER;
+            return ret_model_id;
         }
         ret = model_instance->tokenizer->load(tokenizer_path);
-        if (ret) return ret;
+        if (ret) {
+            LOGE("[LOAD_MODEL] Failed to load tokenizer for model ID %d", _next_model_id);
+            return ret_model_id;
+        }
     }
 
     // 4. Create sampler
     model_instance->sampler = std::make_unique<NucleusSampler>();
     if (model_instance->sampler == nullptr) {
-        return RWKV_ERROR_SAMPLER;
+        return ret_model_id;
     }
 
     // 5. Store the instance and return its ID
-    int model_id = _next_model_id++;
-    _models[model_id] = std::move(model_instance);
-    _models[model_id]->model_path = model_path;
-    _models[model_id]->backend_name = backend_name;
-    _models[model_id]->tokenizer_path = tokenizer_path;
+    ret_model_id = _next_model_id++;
+    _models[ret_model_id] = std::move(model_instance);
+    _models[ret_model_id]->model_path = model_path;
+    _models[ret_model_id]->backend_name = backend_name;
+    _models[ret_model_id]->tokenizer_path = tokenizer_path;
 
-    return model_id;
+    return ret_model_id;
 }
 
 int runtime::release_model(int model_id) {
@@ -1519,10 +1523,12 @@ int runtime::clear_state(int model_id) {
 
 int runtime::gen_completion(int model_id, std::string prompt, int max_length, int stop_code, void (*callback)(const char *, const int, const char *)) {
     if (_models.find(model_id) == _models.end()) {
+        LOGE("[GEN_COMPLETION] Model ID %d not found", model_id);
         return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
     }
     auto &model = _models.at(model_id);
     if (model->backend == nullptr || model->tokenizer == nullptr) {
+        LOGE("[GEN_COMPLETION] Backend or tokenizer for model ID %d not found", model_id);
         return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
     }
     model->response_buffer = "";
@@ -1537,6 +1543,7 @@ int runtime::gen_completion(int model_id, std::string prompt, int max_length, in
     float *logits = nullptr;
     int ret = eval_logits(model_id, ids, logits);
     if (ret || !logits) {
+        LOGE("[GEN_COMPLETION] Error evaluating logits");
         model->is_generating = false;
         return ret;
     }
