@@ -15,6 +15,9 @@ target_link_libraries(lambada PUBLIC rwkv_mobile_internal)
 add_executable(test_chat test_chat.cpp)
 target_link_libraries(test_chat PUBLIC rwkv_mobile_internal)
 
+add_executable(test_chat_batch test_chat_batch.cpp)
+target_link_libraries(test_chat_batch PUBLIC rwkv_mobile_internal)
+
 add_executable(test_chat_resume test_chat_resume.cpp ../src/c_api.cpp)
 target_link_libraries(test_chat_resume PUBLIC rwkv_mobile_internal)
 
@@ -62,6 +65,9 @@ target_link_libraries(test_soc_detect PUBLIC rwkv_mobile_internal)
 
 add_executable(simple_benchmark simple_benchmark.cpp)
 target_link_libraries(simple_benchmark PUBLIC rwkv_mobile_internal)
+
+add_executable(batch_benchmark batch_benchmark.cpp)
+target_link_libraries(batch_benchmark PUBLIC rwkv_mobile_internal)
 
 if (ENABLE_TTS)
     add_executable(test_tts test_tts.cpp)

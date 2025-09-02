@@ -422,6 +422,27 @@ int runtime::eval_logits_with_embeddings(int model_id, const float *embeddings, 
     return ret;
 }
 
+int runtime::eval_logits_batch_decode(int model_id, std::vector<int> ids, float *& logits) {
+    if (_models.find(model_id) == _models.end()) {
+        return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
+    }
+    auto &model = _models.at(model_id);
+    if (model->backend == nullptr) {
+        return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
+    }
+    auto start = std::chrono::high_resolution_clock::now();
+    std::vector<std::vector<int>> ids_batch(ids.size());
+    for (int i = 0; i < ids.size(); i++) {
+        ids_batch[i] = std::vector<int>(1);
+        ids_batch[i][0] = ids[i];
+    }
+
+    int ret = model->backend->eval_batch(ids_batch, logits);
+    auto end = std::chrono::high_resolution_clock::now();
+    _decode_speed = ids.size() * 1e6f / std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+    return ret;
+}
+
 std::string runtime::apply_chat_template(int model_id, std::vector<std::string> inputs, bool enable_reasoning) {
     if (_models.find(model_id) == _models.end()) {
         return "";
@@ -611,6 +632,213 @@ int runtime::chat(int model_id, std::vector<std::string> inputs, const int max_l
 
     if (response_ids_raw.size() > 0) {
         int ret = model->backend->register_state_checkpoint(node, response_ids_raw, logits);
+        if (ret) return ret;
+    }
+
+    if (logits != node->last_logits.data()) {
+        model->backend->free_logits_if_allocated(logits);
+    }
+
+    model->is_generating = false;
+    model->stop_signal = false;
+    return RWKV_SUCCESS;
+}
+
+int runtime::chat_batch(int model_id, std::vector<std::string> inputs, const int max_length, const int batch_size, void (*callback_batch)(const int, const char **, const int*, const char **), bool enable_reasoning) {
+    if (_models.find(model_id) == _models.end()) {
+        return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
+    }
+    auto &model = _models.at(model_id);
+    if (model->backend == nullptr || model->tokenizer == nullptr) {
+        return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
+    }
+
+    bool supported = false;
+    for (auto size : model->backend->supported_batch_sizes) {
+        if (batch_size == size) {
+            supported = true;
+            break;
+        }
+    }
+    if (!supported) {
+        LOGE("chat_batch: batch size %d is not supported\n", batch_size);
+        return RWKV_ERROR_RUNTIME | RWKV_ERROR_UNSUPPORTED;
+    }
+
+    model->is_generating = true;
+    model->stop_signal = false;
+
+    auto input_text = apply_chat_template(model_id, inputs, enable_reasoning);
+    LOGD("Applied chat template: \"%s\"\n", input_text.c_str());
+    std::vector<int> text_ids = model->tokenizer->encode(input_text);
+    std::string debug_msg = "text_ids: ";
+    for (auto id : text_ids) {
+        debug_msg += std::to_string(id) + " ";
+    }
+    LOGD("%s\n", debug_msg.c_str());
+
+    model->response_buffer_batch.resize(batch_size);
+    model->response_buffer_ids_batch.resize(batch_size);
+    model->response_buffer_eos_found_batch.resize(batch_size);
+    for (int i = 0; i < batch_size; i++) {
+        model->response_buffer_batch[i] = input_text.substr(input_text.rfind(model->response_role + ":") + (model->response_role + ":").size());;
+        model->response_buffer_ids_batch[i].clear();
+        model->response_buffer_eos_found_batch[i] = false;
+    }
+
+    float *logits = nullptr;
+    std::vector<int> tokens_to_prefill;
+    auto node = model->backend->match_and_load_state(text_ids, tokens_to_prefill);
+
+    // prefill needed tokens
+    if (tokens_to_prefill.size() > 0) {
+        _prefill_progress_start(tokens_to_prefill.size());
+        std::string debug_msg = "new tokens to prefill: ";
+        for (auto id : tokens_to_prefill) {
+            debug_msg += std::to_string(id) + " ";
+        }
+        LOGD("%s\n", debug_msg.c_str());
+
+        // save a state checkpoint every about 256 tokens
+        int checkpoint_interval = 256;
+        for (int i = 0; i < tokens_to_prefill.size(); i += checkpoint_interval) {
+            std::vector<int> tokens_to_prefill_chunk = std::vector<int>(tokens_to_prefill.begin() + i, tokens_to_prefill.begin() + std::min(i + checkpoint_interval, (int)tokens_to_prefill.size()));
+            eval_logits(model_id, tokens_to_prefill_chunk, logits);
+            int ret = model->backend->register_state_checkpoint(node, tokens_to_prefill_chunk, logits);
+            if (ret) return ret;
+            model->backend->free_logits_if_allocated(logits);
+        }
+    }
+    _prefill_progress_finish();
+
+    std::vector<std::vector<int>> response_ids_raw_batch(batch_size);
+    int ret;
+
+    std::vector<std::map<int, float>> occurences_batch(batch_size);
+    for (size_t i = 1; i < inputs.size(); i += 2) {
+        std::vector<int> ids = model->tokenizer->encode(" " + inputs[i]);
+        for (auto id: ids) {
+            for (int j = 0; j < batch_size; j++) {
+                occurences_batch[j][id]++;
+            }
+        }
+    }
+
+    auto num_vocab = model->backend->get_num_vocab();
+    if (logits == nullptr) {
+        if (node->last_logits.size() == num_vocab) {
+            logits = node->last_logits.data();
+        } else {
+            LOGE("no logits found, neither from saved state nor from new tokens to prefill\n");
+            ret = eval_logits(model_id, text_ids.back(), logits);
+            if (ret) return ret;
+        }
+    }
+
+    bool is_pseudo_thinking = enable_reasoning && model->response_buffer_batch[0].find("</think>") != std::string::npos;
+
+    std::vector<int> decoded_idx(batch_size);
+    model->sampler->apply_penalties(logits, num_vocab);
+
+    logits[61] = -1e9f;
+    logits[261] = -1e9f;
+
+    auto idx = model->sampler->sample(logits, num_vocab);
+    for (int i = 0; i < batch_size; i++) {
+        decoded_idx[i] = idx;
+    }
+
+    std::any state_start;
+    model->backend->get_state(state_start);
+    for (int i = 0; i < batch_size; i++) {
+        model->backend->set_state_on_batch_slot(i, state_start);
+    }
+    model->backend->free_state(state_start);
+
+    std::vector<std::any> state_to_save(batch_size);
+
+    std::vector<bool> thinking_end_tag_found_batch(batch_size, false);
+    for (int i = 0; i < max_length; i++) {
+        if (i != 0) {
+            for (int j = 0; j < batch_size; j++) {
+                model->sampler->apply_penalties(logits + j * num_vocab, num_vocab, occurences_batch[j],
+                    model->sampler->get_token_banned(), model->sampler->get_presence_penalty(),
+                    model->sampler->get_frequency_penalty(), model->sampler->get_penalty_decay());
+
+                if (is_pseudo_thinking && i == 1 && decoded_idx[j] == 11) {
+                    logits[j * num_vocab + 61] = -1e9f;
+                }
+            }
+
+            decoded_idx = model->sampler->sample_batch(logits, model->backend->get_num_vocab(), model->backend->get_num_vocab(), batch_size);
+        }
+
+        for (int j = 0; j < batch_size; j++) {
+            if (decoded_idx[j] == 0) {
+                model->response_buffer_eos_found_batch[j] = true;
+            }
+
+            if (!model->response_buffer_eos_found_batch[j]) {
+                std::string decoded = model->tokenizer->decode(decoded_idx[j]);
+                std::string tmp = model->response_buffer_batch[j] + decoded;
+                for (auto &stop_code : model->stop_codes) {
+                    if (enable_reasoning && !thinking_end_tag_found_batch[j] && stop_code == "\n\n") {
+                        continue;
+                    }
+                    if (tmp.size() >= stop_code.size() &&
+                        tmp.compare(tmp.size() - stop_code.size(), stop_code.size(), stop_code) == 0) {
+                        LOGD("stop code found for batch %d: %s\n", j, stop_code.c_str());
+                        model->response_buffer_eos_found_batch[j] = true;
+                        std::any state_end;
+                        model->backend->get_state_on_batch_slot(j, state_end);
+                        state_to_save[j] = std::move(state_end);
+                        break;
+                    }
+                }
+
+                if (enable_reasoning && !thinking_end_tag_found_batch[j]) {
+                    if (tmp.find("</think>") != std::string::npos) {
+                        thinking_end_tag_found_batch[j] = true;
+                    }
+                }
+            }
+        }
+
+        auto all_eos_found = std::all_of(model->response_buffer_eos_found_batch.begin(), model->response_buffer_eos_found_batch.end(), [](bool eos_found) { return eos_found; });
+        if (all_eos_found || model->stop_signal) {
+            LOGD("stopping generation, eos_found: %d, stop_signal: %d\n", all_eos_found, model->stop_signal);
+            break;
+        }
+
+        if (i != 0 || logits != node->last_logits.data()) {
+            model->backend->free_logits_if_allocated(logits);
+        }
+
+        ret = eval_logits_batch_decode(model_id, decoded_idx, logits);
+        if (ret) return ret;
+
+        for (int j = 0; j < batch_size; j++) {
+            if (model->response_buffer_eos_found_batch[j]) {
+                continue;
+            }
+            response_ids_raw_batch[j].emplace_back(decoded_idx[j]);
+            model->response_buffer_batch[j] += model->tokenizer->decode(decoded_idx[j]);
+            model->response_buffer_ids_batch[j].emplace_back(decoded_idx[j]);
+            if (i == 0 && model->response_buffer_batch[j][0] == ' ') {
+                model->response_buffer_batch[j] = model->response_buffer_batch[j].substr(1);
+            }
+
+            occurences_batch[j][decoded_idx[j]]++;
+        }
+
+        // TODO: callback_batch
+        // if (callback) {
+        //     callback(model->response_buffer.c_str(), decoded_idx, decoded.c_str());
+        // }
+    }
+
+    if (response_ids_raw_batch[0].size() > 0) {
+        int ret = model->backend->register_batch_state_checkpoint(node, state_to_save, response_ids_raw_batch, logits);
         if (ret) return ret;
     }
 
@@ -1869,6 +2097,30 @@ bool runtime::get_response_buffer_eos_found(int model_id) {
     }
     auto &model = _models.at(model_id);
     return model->response_buffer_eos_found;
+}
+
+std::vector<std::string> runtime::get_response_buffer_content_batch(int model_id) {
+    if (_models.find(model_id) == _models.end()) {
+        return {};
+    }
+    auto &model = _models.at(model_id);
+    return model->response_buffer_batch;
+}
+
+std::vector<std::vector<int32_t>> runtime::get_response_buffer_ids_batch(int model_id) {
+    if (_models.find(model_id) == _models.end()) {
+        return {};
+    }
+    auto &model = _models.at(model_id);
+    return model->response_buffer_ids_batch;
+}
+
+std::vector<bool> runtime::get_response_buffer_eos_found_batch(int model_id) {
+    if (_models.find(model_id) == _models.end()) {
+        return {};
+    }
+    auto &model = _models.at(model_id);
+    return model->response_buffer_eos_found_batch;
 }
 
 double runtime::get_prefill_progress(int model_id) {

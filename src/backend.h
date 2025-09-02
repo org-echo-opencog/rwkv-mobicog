@@ -19,6 +19,7 @@ public:
     virtual int load_model(std::string model_path) { return RWKV_ERROR_MODEL; }
     virtual int eval(int id, float *& logits) { return 0; };
     virtual int eval(std::vector<int> ids, float *& logits, bool skip_logits_copy = false) { return 0; };
+    virtual int eval_batch(std::vector<std::vector<int>> ids, float *& logits) { return RWKV_ERROR_UNSUPPORTED; };
     virtual int eval_with_embeddings(const float *embeddings, int n_tokens, float *& logits) { return RWKV_ERROR_UNSUPPORTED; };
     virtual void free_logits_if_allocated(float *& logits) { return; };
     virtual int get_state(std::any &state) { return 0; }
@@ -28,6 +29,10 @@ public:
     virtual int release_model() { return 0; };
     virtual int release() { return 0; };
     virtual bool is_available() { return false; };
+
+    virtual int get_state_on_batch_slot(int slot, std::any &state) { return 0; }
+    virtual int set_state_on_batch_slot(int slot, std::any state) { return 0; }
+    virtual int zero_state_on_batch_slot(int slot) { return 0; }
 
     virtual double get_prefill_speed() { return -1; }
     virtual double get_decode_speed() { return -1; }
@@ -44,6 +49,8 @@ public:
     int hidden_size;
     int version;
     int vocab_size;
+
+    std::vector<int> supported_batch_sizes = {1};
 
     std::string extra_str;
 
@@ -63,6 +70,7 @@ public:
 
     state_node* match_and_load_state(const std::vector<int> &ids, std::vector<int> &new_ids_to_prefill);
     int register_state_checkpoint(state_node* &node, const std::vector<int> &ids, const float *logits);
+    int register_batch_state_checkpoint(state_node* &node, std::vector<std::any> &states, const std::vector<std::vector<int>> &ids, const float *logits);
 };
 
 enum {

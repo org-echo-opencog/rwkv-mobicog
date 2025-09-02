@@ -12,6 +12,7 @@ public:
     std::vector<int> ids;
     std::vector<float> last_logits;
     struct state_node * next = nullptr;
+    std::vector<struct state_node *> batch_states;
 
     state_node() {
     }
@@ -20,6 +21,10 @@ public:
         if (state.has_value()) {
             state.reset();
         }
+        for (auto s : batch_states) {
+            s->state.reset();
+        }
+        batch_states.clear();
     }
 
     inline void delete_after() {

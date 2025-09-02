@@ -15,10 +15,11 @@ int web_rwkv_backend::init(void * extra) {
 }
 
 int web_rwkv_backend::load_model(std::string model_path) {
+    const int batch_size = 8;
+
     if (!std::filesystem::exists(model_path)) {
         return RWKV_ERROR_MODEL | RWKV_ERROR_IO;
     }
-    int batch_size = 4;
     bool use_fp16 = true;
     if (model_path.find("respark") != std::string::npos) {
         use_fp16 = false;
@@ -51,6 +52,12 @@ int web_rwkv_backend::load_model(std::string model_path) {
     num_heads = info.num_head;
     hidden_size = info.num_emb;
     vocab_size = info.num_vocab;
+
+    supported_batch_sizes.clear();
+    for (int i = 1; i <= batch_size; i++) {
+        supported_batch_sizes.push_back(i);
+    }
+
     return RWKV_SUCCESS;
 }
 
@@ -88,8 +95,49 @@ int web_rwkv_backend::eval(std::vector<int> ids, float *& logits, bool skip_logi
     return RWKV_SUCCESS;
 }
 
-void web_rwkv_backend::free_logits_if_allocated(float *& logits) {
-    return;
+int web_rwkv_backend::eval_batch(std::vector<std::vector<int>> ids_batch, float *& logits) {
+    bool supported = false;
+    int batch_size = ids_batch.size();
+    for (auto b : supported_batch_sizes) {
+        if (batch_size == b) {
+            supported = true;
+            break;
+        }
+    }
+    if (!supported) {
+        return RWKV_ERROR_EVAL | RWKV_ERROR_UNSUPPORTED;
+    }
+
+    if (logits_buffer.size() != vocab_size * batch_size) {
+        logits_buffer.resize(vocab_size * batch_size);
+    }
+
+    std::vector<std::vector<uint32_t>> ids_u32_all(ids_batch.size());
+    for (int i = 0; i < ids_batch.size(); i++) {
+        ids_u32_all[i] = std::vector<uint32_t>(ids_batch[i].begin(), ids_batch[i].end());
+    }
+
+    std::vector<uint32_t *> ids_u32_all_ptr(ids_u32_all.size());
+    for (int i = 0; i < ids_u32_all.size(); i++) {
+        ids_u32_all_ptr[i] = ids_u32_all[i].data();
+    }
+
+    std::vector<uintptr_t> len_per_batch;
+    for (const auto& ids : ids_batch) {
+        len_per_batch.push_back(ids.size());
+    }
+    auto ret = infer_raw_last_batch((const uint32_t **)ids_u32_all_ptr.data(), len_per_batch.data(), len_per_batch.size());
+    if (!ret.len || !ret.logits) {
+        return RWKV_ERROR_EVAL;
+    }
+
+    for (int i = 0; i < batch_size; i++) {
+        memcpy(logits_buffer.data() + i * vocab_size, ret.logits + i * ret.len, vocab_size * sizeof(float));
+    }
+    logits = logits_buffer.data();
+
+    ::free_raw_batch(ret);
+    return RWKV_SUCCESS;
 }
 
 bool web_rwkv_backend::is_available() {
@@ -98,12 +146,19 @@ bool web_rwkv_backend::is_available() {
 }
 
 int web_rwkv_backend::zero_state() {
-    ::clear_state(0);
-    return RWKV_SUCCESS;
+    return zero_state_on_batch_slot(0);
 }
 
 int web_rwkv_backend::get_state(std::any &state) {
-    struct StateRaw raw = ::get_state(0);
+    return get_state_on_batch_slot(0, state);
+}
+
+int web_rwkv_backend::set_state(std::any state) {
+    return set_state_on_batch_slot(0, state);
+}
+
+int web_rwkv_backend::get_state_on_batch_slot(int slot, std::any &state) {
+    struct StateRaw raw = ::get_state(slot);
     if (!raw.len || !raw.state) {
         return RWKV_ERROR_BACKEND | RWKV_ERROR_INVALID_PARAMETERS;
     }
@@ -111,7 +166,7 @@ int web_rwkv_backend::get_state(std::any &state) {
     return RWKV_SUCCESS;
 }
 
-int web_rwkv_backend::set_state(std::any state) {
+int web_rwkv_backend::set_state_on_batch_slot(int slot, std::any state) {
     if (!state.has_value()) {
         return RWKV_ERROR_BACKEND | RWKV_ERROR_INVALID_PARAMETERS;
     }
@@ -124,11 +179,16 @@ int web_rwkv_backend::set_state(std::any state) {
         if (!raw.len || !raw.state) {
             return RWKV_ERROR_BACKEND | RWKV_ERROR_INVALID_PARAMETERS;
         }
-        ::set_state(raw, 0);
+        ::set_state(raw, slot);
         return RWKV_SUCCESS;
     } catch (const std::bad_any_cast& e) {
         return RWKV_ERROR_BACKEND | RWKV_ERROR_INVALID_PARAMETERS;
     }
+}
+
+int web_rwkv_backend::zero_state_on_batch_slot(int slot) {
+    ::clear_state(slot);
+    return RWKV_SUCCESS;
 }
 
 int web_rwkv_backend::free_state(std::any state) {

@@ -25,3 +25,7 @@ An inference runtime with multiple backends supported.
 - `cd rwkv-mobile && mkdir build && cd build`
 - `cmake ..`
 - `cmake --build . -j $(nproc)`
+
+## TODO:
+- [ ] Better tensor abstraction for different backends
+- [ ] Batch inference for all backends

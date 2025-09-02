@@ -68,6 +68,10 @@ struct ModelInstance {
     std::vector<int32_t> response_buffer_ids;
     bool response_buffer_eos_found = false;
 
+    std::vector<std::string> response_buffer_batch;
+    std::vector<std::vector<int32_t>> response_buffer_ids_batch;
+    std::vector<bool> response_buffer_eos_found_batch;
+
     // Generation status
     std::string prompt;
     bool is_generating = false;
@@ -97,10 +101,12 @@ public:
     int eval_logits(int model_id, int id, float *& logits);
     int eval_logits(int model_id, std::vector<int> ids, float *& logits);
     int eval_logits_with_embeddings(int model_id, const float *embeddings, int n_tokens, float *& logits);
+    int eval_logits_batch_decode(int model_id, std::vector<int> ids, float *& logits);
     void free_logits_if_allocated(int model_id, float *& logits);
 
     // with history
     int chat(int model_id, std::vector<std::string> inputs, const int max_length, void (*callback)(const char *, const int, const char *) = nullptr, bool enable_reasoning = false);
+    int chat_batch(int model_id, std::vector<std::string> inputs, const int max_length, const int batch_size, void (*callback_batch)(const int, const char **, const int*, const char **) = nullptr, bool enable_reasoning = false);
     int gen_completion(int model_id, std::string prompt, int max_length, int stop_code, void (*callback)(const char *, const int, const char *));
 
     int set_prompt(int model_id, std::string prompt);
@@ -113,6 +119,11 @@ public:
     const std::vector<int32_t> get_response_buffer_ids(int model_id);
     void clear_response_buffer(int model_id);
     bool get_response_buffer_eos_found(int model_id);
+
+    std::vector<std::string> get_response_buffer_content_batch(int model_id);
+    std::vector<std::vector<int32_t>> get_response_buffer_ids_batch(int model_id);
+    void clear_response_buffer_batch(int model_id);
+    std::vector<bool> get_response_buffer_eos_found_batch(int model_id);
 #ifdef ENABLE_VISION
     int load_vision_encoder(int model_id, std::string model_path, std::string adapter_path = "");
     int release_vision_encoder(int model_id);
