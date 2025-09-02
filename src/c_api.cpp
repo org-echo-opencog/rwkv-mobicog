@@ -97,6 +97,43 @@ int rwkvmobile_runtime_eval_chat_with_history_async(
     return RWKV_SUCCESS;
 }
 
+int rwkvmobile_runtime_eval_chat_batch_with_history_async(
+    rwkvmobile_runtime_t handle,
+    int model_id,
+    const char ** inputs,
+    const int num_inputs,
+    const int batch_size,
+    const int max_tokens,
+    void (*callback_batch)(const int, const char **, const int*, const char **),
+    int enable_reasoning) {
+    if (handle == nullptr || inputs == nullptr || num_inputs == 0 || max_tokens <= 0 || batch_size <= 0) {
+        return RWKV_ERROR_INVALID_PARAMETERS;
+    }
+
+    auto rt = static_cast<class runtime *>(handle);
+    rt->set_is_generating(model_id, true);
+    rt->set_stop_signal(model_id, false);
+    std::vector<std::string> inputs_vec;
+    for (int i = 0; i < num_inputs; i++) {
+        inputs_vec.push_back(std::string(inputs[i]));
+    }
+
+    std::thread generation_thread([=]() {
+        int ret = rt->chat_batch(
+            model_id,
+            inputs_vec,
+            max_tokens,
+            batch_size,
+            callback_batch,
+            enable_reasoning != 0);
+        return ret;
+    });
+
+    generation_thread.detach();
+
+    return RWKV_SUCCESS;
+}
+
 int rwkvmobile_runtime_gen_completion_async(
     rwkvmobile_runtime_t handle,
     int model_id,
@@ -485,6 +522,46 @@ void rwkvmobile_runtime_free_response_buffer(struct response_buffer buffer) {
         return;
     }
     free((void *)buffer.content);
+}
+
+struct response_buffer_batch rwkvmobile_runtime_get_response_buffer_content_batch(rwkvmobile_runtime_t runtime, int model_id) {
+    struct response_buffer_batch buffer;
+    buffer.contents = nullptr;
+    buffer.lengths = nullptr;
+    buffer.eos_founds = nullptr;
+    buffer.batch_size = 0;
+    if (runtime == nullptr) {
+        return buffer;
+    }
+    auto rt = static_cast<class runtime *>(runtime);
+    std::vector<std::string> contents = rt->get_response_buffer_content_batch(model_id);
+    auto eos_founds = rt->get_response_buffer_eos_found_batch(model_id);
+    buffer.batch_size = contents.size();
+    buffer.contents = (char **)malloc(contents.size() * sizeof(char *));
+    buffer.lengths = (int *)malloc(contents.size() * sizeof(int));
+    buffer.eos_founds = (int *)malloc(contents.size() * sizeof(int));
+    for (int i = 0; i < contents.size(); i++) {
+        buffer.contents[i] = (char *)malloc(contents[i].size() * sizeof(char));
+        strncpy(buffer.contents[i], contents[i].c_str(), contents[i].size());
+        buffer.lengths[i] = contents[i].size();
+        buffer.eos_founds[i] = eos_founds[i];
+    }
+    return buffer;
+}
+
+void rwkvmobile_runtime_free_response_buffer_batch(struct response_buffer_batch buffer) {
+    if (buffer.contents == nullptr) {
+        return;
+    }   
+    for (int i = 0; i < buffer.batch_size; i++) {
+        if (buffer.contents[i] != nullptr)
+            free(buffer.contents[i]);
+    }
+    if (buffer.lengths != nullptr)
+        free(buffer.lengths);
+    if (buffer.eos_founds != nullptr)
+        free(buffer.eos_founds);
+    free(buffer.contents);
 }
 
 struct token_ids rwkvmobile_runtime_get_response_buffer_ids(rwkvmobile_runtime_t runtime, int model_id) {
