@@ -134,6 +134,30 @@ int rwkvmobile_runtime_eval_chat_batch_with_history_async(
     return RWKV_SUCCESS;
 }
 
+struct supported_batch_sizes rwkvmobile_runtime_get_supported_batch_sizes(rwkvmobile_runtime_t runtime, int model_id) {
+    struct supported_batch_sizes sizes;
+    sizes.sizes = nullptr;
+    sizes.length = 0;
+    if (runtime == nullptr) {
+        return sizes;
+    }
+    auto rt = static_cast<class runtime *>(runtime);
+    auto supported_batch_sizes = rt->get_supported_batch_sizes(model_id);
+    sizes.length = supported_batch_sizes.size();
+    sizes.sizes = (int *)malloc(sizes.length * sizeof(int));
+    for (int i = 0; i < sizes.length; i++) {
+        sizes.sizes[i] = supported_batch_sizes[i];
+    }
+    return sizes;
+}
+
+void rwkvmobile_runtime_free_supported_batch_sizes(struct supported_batch_sizes sizes) {
+    if (sizes.sizes == nullptr) {
+        return;
+    }
+    free(sizes.sizes);
+}
+
 int rwkvmobile_runtime_gen_completion_async(
     rwkvmobile_runtime_t handle,
     int model_id,

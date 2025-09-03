@@ -443,6 +443,14 @@ int runtime::eval_logits_batch_decode(int model_id, std::vector<int> ids, float 
     return ret;
 }
 
+std::vector<int> runtime::get_supported_batch_sizes(int model_id) {
+    if (_models.find(model_id) == _models.end()) {
+        return {};
+    }
+    auto &model = _models.at(model_id);
+    return model->backend->supported_batch_sizes;
+}
+
 std::string runtime::apply_chat_template(int model_id, std::vector<std::string> inputs, bool enable_reasoning) {
     if (_models.find(model_id) == _models.end()) {
         return "";

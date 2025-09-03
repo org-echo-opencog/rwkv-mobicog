@@ -230,6 +230,28 @@ late final _rwkvmobile_runtime_eval_chat_batch_with_history_asyncPtr = _lookup<
     ffi.NativeFunction<ffi.Int Function(rwkvmobile_runtime_t , ffi.Int , ffi.Pointer<ffi.Pointer<ffi.Char>> , ffi.Int , ffi.Int , ffi.Int , ffi.Pointer<ffi.NativeFunction<ffi.Void Function(ffi.Int , ffi.Pointer<ffi.Pointer<ffi.Char>> , ffi.Pointer<ffi.Int> , ffi.Pointer<ffi.Pointer<ffi.Char>> )>> , ffi.Int )>>('rwkvmobile_runtime_eval_chat_batch_with_history_async');
 late final _rwkvmobile_runtime_eval_chat_batch_with_history_async = _rwkvmobile_runtime_eval_chat_batch_with_history_asyncPtr.asFunction<int Function(rwkvmobile_runtime_t , int , ffi.Pointer<ffi.Pointer<ffi.Char>> , int , int , int , ffi.Pointer<ffi.NativeFunction<ffi.Void Function(ffi.Int , ffi.Pointer<ffi.Pointer<ffi.Char>> , ffi.Pointer<ffi.Int> , ffi.Pointer<ffi.Pointer<ffi.Char>> )>> , int )>();
 
+supported_batch_sizes rwkvmobile_runtime_get_supported_batch_sizes(rwkvmobile_runtime_t runtime,
+int model_id,
+) {
+  return _rwkvmobile_runtime_get_supported_batch_sizes(runtime,
+model_id,
+);
+}
+
+late final _rwkvmobile_runtime_get_supported_batch_sizesPtr = _lookup<
+    ffi.NativeFunction<supported_batch_sizes Function(rwkvmobile_runtime_t , ffi.Int )>>('rwkvmobile_runtime_get_supported_batch_sizes');
+late final _rwkvmobile_runtime_get_supported_batch_sizes = _rwkvmobile_runtime_get_supported_batch_sizesPtr.asFunction<supported_batch_sizes Function(rwkvmobile_runtime_t , int )>();
+
+void rwkvmobile_runtime_free_supported_batch_sizes(supported_batch_sizes sizes,
+) {
+  return _rwkvmobile_runtime_free_supported_batch_sizes(sizes,
+);
+}
+
+late final _rwkvmobile_runtime_free_supported_batch_sizesPtr = _lookup<
+    ffi.NativeFunction<ffi.Void Function(supported_batch_sizes )>>('rwkvmobile_runtime_free_supported_batch_sizes');
+late final _rwkvmobile_runtime_free_supported_batch_sizes = _rwkvmobile_runtime_free_supported_batch_sizesPtr.asFunction<void Function(supported_batch_sizes )>();
+
 int rwkvmobile_runtime_gen_completion(rwkvmobile_runtime_t runtime,
 int model_id,
 ffi.Pointer<ffi.Char> prompt,
@@ -995,6 +1017,14 @@ final class response_buffer_batch extends ffi.Struct{
 
 final class tts_streaming_buffer extends ffi.Struct{
   external ffi.Pointer<ffi.Float> samples;
+
+  @ffi.Int()
+  external int length;
+
+}
+
+final class supported_batch_sizes extends ffi.Struct{
+  external ffi.Pointer<ffi.Int> sizes;
 
   @ffi.Int()
   external int length;
