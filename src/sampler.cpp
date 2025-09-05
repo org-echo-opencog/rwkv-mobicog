@@ -1,4 +1,5 @@
 #include "sampler.h"
+#include <mutex>
 
 namespace rwkvmobile {
 
@@ -7,10 +8,10 @@ NucleusSampler::NucleusSampler() {
 }
 
 int NucleusSampler::sample(const float* logits, const size_t size) {
-    return sample(logits, size, _temperature, _top_k, _top_p);
+    return sample(logits, size, _temperature, _top_k, _top_p, _index_buffer, _probs_buffer);
 }
 
-int NucleusSampler::sample(const float* logits, const size_t size, float temperature, int top_k, float top_p) {
+int NucleusSampler::sample(const float* logits, const size_t size, float temperature, int top_k, float top_p, std::vector<int> &index_buffer, std::vector<float> &probs_buffer) {
     if (logits == nullptr) {
         return 0;
     }
@@ -59,8 +60,11 @@ int NucleusSampler::sample(const float* logits, const size_t size, float tempera
     }
 
     // random choice
-    float random_value = cumsum * (_generator() - _generator.min()) /
-                        (_generator.max() - _generator.min());
+    float random_value;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        random_value = cumsum * (_generator() - _generator.min()) / (_generator.max() - _generator.min());
+    }
 
     int ret = -1;
     cumsum = 0;
@@ -93,9 +97,16 @@ std::vector<int> NucleusSampler::sample_batch(const float* logits, const size_t 
         top_p = std::vector<float>(batch_size, top_p[0]);
     }
 
+    if (_batch_index_buffer.size() < batch_size) {
+        _batch_index_buffer.resize(batch_size);
+    }
+    if (_batch_probs_buffer.size() < batch_size) {
+        _batch_probs_buffer.resize(batch_size);
+    }
+
     #pragma omp parallel for
     for (int i = 0; i < batch_size; i++) {
-        ret[i] = sample(logits + i * hstep, sampling_size, temperature[i], top_k[i], top_p[i]);
+        ret[i] = sample(logits + i * hstep, sampling_size, temperature[i], top_k[i], top_p[i], _batch_index_buffer[i], _batch_probs_buffer[i]);
     }
     return ret;
 }

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <vector>
 #include <map>
+#include <mutex>
 
 namespace rwkvmobile {
 
@@ -22,7 +23,7 @@ public:
 
     int sample(const float* logits, const size_t size);
 
-    int sample(const float* logits, const size_t size, float temperature, int top_k, float top_p);
+    int sample(const float* logits, const size_t size, float temperature, int top_k, float top_p, std::vector<int> &index_buffer, std::vector<float> &probs_buffer);
 
     std::vector<int> sample_batch(const float* logits, const size_t sampling_size, const size_t hstep, int batch_size);
 
@@ -47,10 +48,14 @@ public:
     std::vector<int> get_token_banned() { return _token_banned; }
 
 private:
+    std::mutex _mutex;
     std::minstd_rand0 _generator;
 
-    std::vector<float> probs_buffer;
-    std::vector<int> index_buffer;
+    std::vector<float> _probs_buffer;
+    std::vector<int> _index_buffer;
+
+    std::vector<std::vector<float>> _batch_probs_buffer;
+    std::vector<std::vector<int>> _batch_index_buffer;
 
     std::vector<int> _token_banned;
 
