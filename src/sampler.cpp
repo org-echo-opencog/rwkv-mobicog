@@ -11,6 +11,10 @@ int NucleusSampler::sample(const float* logits, const size_t size) {
     return sample(logits, size, _temperature, _top_k, _top_p, _index_buffer, _probs_buffer);
 }
 
+int NucleusSampler::sample(const float* logits, const size_t size, float temperature, int top_k, float top_p) {
+    return sample(logits, size, temperature, top_k, top_p, _index_buffer, _probs_buffer);
+}
+
 int NucleusSampler::sample(const float* logits, const size_t size, float temperature, int top_k, float top_p, std::vector<int> &index_buffer, std::vector<float> &probs_buffer) {
     if (logits == nullptr) {
         return 0;

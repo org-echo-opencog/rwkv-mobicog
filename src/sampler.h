@@ -23,6 +23,8 @@ public:
 
     int sample(const float* logits, const size_t size);
 
+    int sample(const float* logits, const size_t size, float temperature, int top_k, float top_p);
+
     int sample(const float* logits, const size_t size, float temperature, int top_k, float top_p, std::vector<int> &index_buffer, std::vector<float> &probs_buffer);
 
     std::vector<int> sample_batch(const float* logits, const size_t sampling_size, const size_t hstep, int batch_size);
