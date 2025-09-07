@@ -702,6 +702,9 @@ int qnn_backend::load_model(std::string model_path) {
                     qnnEmbdGraphsCount++;
                 } else if (graphName.find("prefill") != std::string::npos) {
                     qnnPrefillGraphsCount++;
+                } else if (graphName.find("bsz") != std::string::npos) {
+                    int bsz = std::stoi(graphName.substr(graphName.find("bsz") + 3));
+                    qnnBatchDecodeSupportedBatchSizes.push_back(bsz);
                 } else {
                     qnnDecodeGraphsCount++;
                 }
@@ -715,6 +718,7 @@ int qnn_backend::load_model(std::string model_path) {
         GraphInfo_t *graphInfoArrPrefill = nullptr;
         GraphInfo_t *graphInfoArrEmbd = nullptr;
         GraphInfo_t *graphInfoArrEmbdPrefill = nullptr;
+        GraphInfo_t *graphInfoArrBatchDecode = nullptr;
 
         if (qnnPrefillGraphsCount > 0) {
             qnnPrefillGraphsInfo = (GraphInfo_t **)calloc(qnnPrefillGraphsCount, sizeof(GraphInfo_t *));
@@ -731,11 +735,17 @@ int qnn_backend::load_model(std::string model_path) {
             graphInfoArrEmbdPrefill =
                 (GraphInfo_t *)calloc(qnnEmbdPrefillGraphsCount, sizeof(GraphInfo_t));
         }
+        if (qnnBatchDecodeSupportedBatchSizes.size() > 0) {
+            qnnBatchDecodeGraphsInfo = (GraphInfo_t **)calloc(qnnBatchDecodeSupportedBatchSizes.size(), sizeof(GraphInfo_t *));
+            graphInfoArrBatchDecode =
+                (GraphInfo_t *)calloc(qnnBatchDecodeSupportedBatchSizes.size(), sizeof(GraphInfo_t));
+        }
 
         if (nullptr == qnnDecodeGraphsInfo || nullptr == graphInfoArrDecode ||
             (qnnPrefillGraphsCount > 0 && (nullptr == qnnPrefillGraphsInfo || nullptr == graphInfoArrPrefill)) ||
             (qnnEmbdGraphsCount > 0 && (nullptr == qnnEmbdGraphsInfo || nullptr == graphInfoArrEmbd)) ||
-            (qnnEmbdPrefillGraphsCount > 0 && (nullptr == qnnEmbdPrefillGraphsInfo || nullptr == graphInfoArrEmbdPrefill))) {
+            (qnnEmbdPrefillGraphsCount > 0 && (nullptr == qnnEmbdPrefillGraphsInfo || nullptr == graphInfoArrEmbdPrefill)) ||
+            (qnnBatchDecodeSupportedBatchSizes.size() > 0 && (nullptr == qnnBatchDecodeGraphsInfo || nullptr == graphInfoArrBatchDecode))) {
             LOGE("Failed to allocate memory for *graphInfo");
             if (nullptr != qnnDecodeGraphsInfo) {
                 free(qnnDecodeGraphsInfo);
@@ -761,12 +771,23 @@ int qnn_backend::load_model(std::string model_path) {
             if (nullptr != graphInfoArrEmbdPrefill) {
                 free(graphInfoArrEmbdPrefill);
             }
+            if (nullptr != qnnBatchDecodeGraphsInfo) {
+                free(qnnBatchDecodeGraphsInfo);
+            }
+            if (nullptr != graphInfoArrBatchDecode) {
+                free(graphInfoArrBatchDecode);
+            }
             returnStatus = RWKV_ERROR_MODEL;
         }
         LOGI("qnnDecodeGraphsCount: %d, qnnPrefillGraphsCount: %d, qnnEmbdGraphsCount: %d, qnnEmbdPrefillGraphsCount: %d", qnnDecodeGraphsCount, qnnPrefillGraphsCount, qnnEmbdGraphsCount, qnnEmbdPrefillGraphsCount);
+        std::string debug_message = "qnnBatchDecodeSupportedBatchSizes: ";
+        for (auto bsz : qnnBatchDecodeSupportedBatchSizes) {
+            debug_message += std::to_string(bsz) + " ";
+        }
+        LOGI("%s", debug_message.c_str());
 
         if (RWKV_SUCCESS == returnStatus) {
-            int prefill_gidx = 0, decode_gidx = 0, embd_gidx = 0, embd_prefill_gidx = 0;
+            int prefill_gidx = 0, decode_gidx = 0, embd_gidx = 0, embd_prefill_gidx = 0, batch_decode_gidx = 0;
             for (int i = 0; i < n_chunks; i++) {
                 for (int j = 0; j < graphCounts[i]; j++) {
                     auto graphName = std::string((*graphInfos[i])[j].graphName);
@@ -797,6 +818,15 @@ int qnn_backend::load_model(std::string model_path) {
                         qnnPrefillGraphsInfo[prefill_gidx]->outputTensors = (*graphInfos[i])[j].outputTensors;
                         qnnPrefillGraphsInfo[prefill_gidx]->numOutputTensors = (*graphInfos[i])[j].numOutputTensors;
                         prefill_gidx++;
+                    } else if (graphName.find("bsz") != std::string::npos) {
+                        qnnBatchDecodeGraphsInfo[batch_decode_gidx] = graphInfoArrBatchDecode + batch_decode_gidx;
+                        qnnBatchDecodeGraphsInfo[batch_decode_gidx]->graph = (*graphInfos[i])[j].graph;
+                        qnnBatchDecodeGraphsInfo[batch_decode_gidx]->graphName = strdup((*graphInfos[i])[j].graphName);
+                        qnnBatchDecodeGraphsInfo[batch_decode_gidx]->inputTensors = (*graphInfos[i])[j].inputTensors;
+                        qnnBatchDecodeGraphsInfo[batch_decode_gidx]->numInputTensors = (*graphInfos[i])[j].numInputTensors;
+                        qnnBatchDecodeGraphsInfo[batch_decode_gidx]->outputTensors = (*graphInfos[i])[j].outputTensors;
+                        qnnBatchDecodeGraphsInfo[batch_decode_gidx]->numOutputTensors = (*graphInfos[i])[j].numOutputTensors;
+                        batch_decode_gidx++;
                     } else {
                         qnnDecodeGraphsInfo[decode_gidx] = graphInfoArrDecode + decode_gidx;
                         qnnDecodeGraphsInfo[decode_gidx]->graph = (*graphInfos[i])[j].graph;
@@ -899,8 +929,11 @@ int qnn_backend::load_model(std::string model_path) {
     n_layers = stateTensorsNameToTensorPointer.size() / 3;
 
     getTensorDims(dims_state, QNN_TENSOR_GET_DIMENSIONS((Qnn_Tensor_t*)stateTensorsNameToTensorPointer["state1_out"]), QNN_TENSOR_GET_RANK((Qnn_Tensor_t*)stateTensorsNameToTensorPointer["state1_out"]));
-    num_heads = dims_state[0];
-    hidden_size = num_heads * dims_state[1];
+    for (int i = 0; i < dims_state.size(); i++) {
+        LOGI("dims_state[%d]: %zu", i, dims_state[i]);
+    }
+    num_heads = dims_state[1];
+    hidden_size = num_heads * dims_state[2];
 
 #ifndef _WIN32
     if (rmpack != nullptr) {
@@ -910,6 +943,9 @@ int qnn_backend::load_model(std::string model_path) {
     {
         std::vector<size_t> dims;
         getTensorDims(dims, QNN_TENSOR_GET_DIMENSIONS(logitsOutputTensor), QNN_TENSOR_GET_RANK(logitsOutputTensor));
+        for (int i = 0; i < dims.size(); i++) {
+            LOGI("logits dims[%d]: %zu", i, dims[i]);
+        }
         vocab_size = dims[2];
     }
 
@@ -1034,6 +1070,14 @@ int qnn_backend::load_model(std::string model_path) {
         }
     }
 #endif
+
+    if (qnnBatchDecodeSupportedBatchSizes.size() > 0) {
+        auto sorted_batch_sizes = qnnBatchDecodeSupportedBatchSizes;
+        std::sort(sorted_batch_sizes.begin(), sorted_batch_sizes.end());
+        for (int i = 0; i < sorted_batch_sizes.size(); i++) {
+            supported_batch_sizes.push_back(sorted_batch_sizes[i]);
+        }
+    }
     return RWKV_SUCCESS;
 }
 
@@ -1085,6 +1129,183 @@ int qnn_backend::qnn_initialize_tensors() {
             embdPrefillGraphsTensorNameToTensorPointer.resize(qnnEmbdPrefillGraphsCount);
             embdPrefillGraphsTensorNameToSize.resize(qnnEmbdPrefillGraphsCount);
         }
+        if (qnnBatchDecodeSupportedBatchSizes.size() > 0) {
+            batchDecodeGraphsTensorNameToTensorPointer.resize(qnnBatchDecodeSupportedBatchSizes.size());
+            batchDecodeGraphsTensorNameToSize.resize(qnnBatchDecodeSupportedBatchSizes.size());
+        }
+
+        if (qnnBatchDecodeSupportedBatchSizes.size() > 0) {
+            // Find the index of the graph with maximum batch size
+            int maxBszIndex = 0;
+            for (int i = 1; i < qnnBatchDecodeSupportedBatchSizes.size(); i++) {
+                if (qnnBatchDecodeSupportedBatchSizes[i] > qnnBatchDecodeSupportedBatchSizes[maxBszIndex]) {
+                    maxBszIndex = i;
+                }
+            }
+            LOGD("Using maximum batch size graph at index %d with batch size %d", maxBszIndex, qnnBatchDecodeSupportedBatchSizes[maxBszIndex]);
+
+            // Initialize the maximum batch size graph first
+            auto maxGraphInfo = (*qnnBatchDecodeGraphsInfo)[maxBszIndex];
+            LOGD("Max Batch Graph %d : %s", maxBszIndex, maxGraphInfo.graphName);
+
+            // Setup output tensors for max batch size graph
+            for (size_t i = 0; i < maxGraphInfo.numOutputTensors; i++) {
+                size_t tensorDataSize = 1;
+                for (int j = 0; j < QNN_TENSOR_GET_RANK(maxGraphInfo.outputTensors[i]); j++) {
+                    tensorDataSize *= *(QNN_TENSOR_GET_DIMENSIONS(maxGraphInfo.outputTensors[i]) + j);
+                }
+                auto tensorName = std::string(QNN_TENSOR_GET_NAME(maxGraphInfo.outputTensors[i]));
+                size_t typeSize = getQnnDatatypeSize(QNN_TENSOR_GET_DATA_TYPE(maxGraphInfo.outputTensors[i]));
+                if (typeSize == 0) {
+                    return RWKV_ERROR_IO;
+                }
+                tensorDataSize *= typeSize;
+                batchDecodeGraphsTensorNameToSize[maxBszIndex][tensorName] = tensorDataSize;
+            }
+
+            if (!qnnIOTensorUtils->setupOutputTensors(&outputTensorsBatchDecode[maxBszIndex], batchDecodeGraphsTensorNameToTensorPointer[maxBszIndex], maxGraphInfo,
+                                          batchDecodeGraphsTensorNameToSize[maxBszIndex], qnnContextHandles[maxBszIndex], false)) {
+                LOGE("Error in setting up Output Tensors for max batch size graph");
+                return RWKV_ERROR_IO;
+            }
+
+            // Map output tensors for max batch size graph
+            for (size_t i = 0; i < maxGraphInfo.numOutputTensors; i++) {
+                auto tensorName = std::string(QNN_TENSOR_GET_NAME(maxGraphInfo.outputTensors[i]));
+                if (tensorName == "out") {
+                    logitsOutputTensorBatchDecode[maxBszIndex] = (Qnn_Tensor_t*)batchDecodeGraphsTensorNameToTensorPointer[maxBszIndex]["out"];
+                } else if (tensorName.find("state") != std::string::npos) {
+                    stateTensorsNameToTensorPointerBatchDecode[maxBszIndex][tensorName] = (Qnn_Tensor_t*)batchDecodeGraphsTensorNameToTensorPointer[maxBszIndex][tensorName];
+                }
+            }
+
+            // Setup input tensors for max batch size graph with state sharing
+            std::unordered_map<std::string, Qnn_Tensor_t*> sharedTensorMapMax;
+            for (size_t i = 0; i < maxGraphInfo.numInputTensors; i++) {
+                size_t tensorDataSize = 1;
+                for (int j = 0; j < QNN_TENSOR_GET_RANK(maxGraphInfo.inputTensors[i]); j++) {
+                    tensorDataSize *= *(QNN_TENSOR_GET_DIMENSIONS(maxGraphInfo.inputTensors[i]) + j);
+                }
+                auto tensorName = std::string(QNN_TENSOR_GET_NAME(maxGraphInfo.inputTensors[i]));
+                size_t typeSize = getQnnDatatypeSize(QNN_TENSOR_GET_DATA_TYPE(maxGraphInfo.inputTensors[i]));
+                if (typeSize == 0) {
+                    return RWKV_ERROR_IO;
+                }
+                tensorDataSize *= typeSize;
+                batchDecodeGraphsTensorNameToSize[maxBszIndex][tensorName] = tensorDataSize;
+                if (tensorName.find("state") != std::string::npos) {
+                    sharedTensorMapMax[tensorName] = (Qnn_Tensor_t*)stateTensorsNameToTensorPointerBatchDecode[maxBszIndex][tensorName.substr(0, tensorName.find("_in")) + "_out"];
+                }
+            }
+
+            if (!qnnIOTensorUtils->setupInputWithSharedTensors(&inputTensorsBatchDecode[maxBszIndex], batchDecodeGraphsTensorNameToTensorPointer[maxBszIndex], maxGraphInfo,
+                                        batchDecodeGraphsTensorNameToSize[maxBszIndex], qnnContextHandles[maxBszIndex], sharedTensorMapMax)) {
+                LOGE("Error in setting up Input Tensors for max batch size graph");
+                return RWKV_ERROR_IO;
+            }
+
+            if (batchDecodeGraphsTensorNameToTensorPointer[maxBszIndex].find("in_bsz" + std::to_string(qnnBatchDecodeSupportedBatchSizes[maxBszIndex])) != batchDecodeGraphsTensorNameToTensorPointer[maxBszIndex].end()) {
+                tokenInputTensorBatchDecode[maxBszIndex] = (Qnn_Tensor_t*)batchDecodeGraphsTensorNameToTensorPointer[maxBszIndex]["in_bsz" + std::to_string(qnnBatchDecodeSupportedBatchSizes[maxBszIndex])];
+            } else {
+                LOGE("No token input tensor found in max batch size graph %s", maxGraphInfo.graphName);
+                return RWKV_ERROR_IO;
+            }
+
+            // Initialize remaining batch decode graphs with shared tensors from max batch size graph
+            for (int i = 0; i < qnnBatchDecodeSupportedBatchSizes.size(); i++) {
+                if (i == maxBszIndex) continue; // Skip the max batch size graph as it's already initialized
+
+                auto graphInfo = (*qnnBatchDecodeGraphsInfo)[i];
+                LOGD("Batch Graph %d : %s (sharing with max batch graph)", i, graphInfo.graphName);
+
+                // Calculate tensor sizes for this graph
+                for (size_t j = 0; j < graphInfo.numOutputTensors; j++) {
+                    size_t tensorDataSize = 1;
+                    for (int k = 0; k < QNN_TENSOR_GET_RANK(graphInfo.outputTensors[j]); k++) {
+                        tensorDataSize *= *(QNN_TENSOR_GET_DIMENSIONS(graphInfo.outputTensors[j]) + k);
+                    }
+                    auto tensorName = std::string(QNN_TENSOR_GET_NAME(graphInfo.outputTensors[j]));
+                    size_t typeSize = getQnnDatatypeSize(QNN_TENSOR_GET_DATA_TYPE(graphInfo.outputTensors[j]));
+                    if (typeSize == 0) {
+                        return RWKV_ERROR_IO;
+                    }
+                    tensorDataSize *= typeSize;
+                    batchDecodeGraphsTensorNameToSize[i][tensorName] = tensorDataSize;
+                }
+
+                // Setup shared tensors map for output tensors
+                std::unordered_map<std::string, Qnn_Tensor_t*> sharedOutputTensorMap;
+                for (size_t j = 0; j < graphInfo.numOutputTensors; j++) {
+                    auto tensorName = std::string(QNN_TENSOR_GET_NAME(graphInfo.outputTensors[j]));
+                    if (tensorName == "out") {
+                        sharedOutputTensorMap[tensorName] = logitsOutputTensorBatchDecode[maxBszIndex];
+                    } else if (tensorName.find("state") != std::string::npos) {
+                        if (stateTensorsNameToTensorPointerBatchDecode[maxBszIndex].find(tensorName) != stateTensorsNameToTensorPointerBatchDecode[maxBszIndex].end()) {
+                            sharedOutputTensorMap[tensorName] = stateTensorsNameToTensorPointerBatchDecode[maxBszIndex][tensorName];
+                        }
+                    }
+                }
+
+                // Setup output tensors with shared memory
+                if (!qnnIOTensorUtils->setupOutputWithSharedTensors(&outputTensorsBatchDecode[i], batchDecodeGraphsTensorNameToTensorPointer[i], graphInfo,
+                                              batchDecodeGraphsTensorNameToSize[i], qnnContextHandles[i], sharedOutputTensorMap)) {
+                    LOGE("Error in setting up shared Output Tensors for batch graph %d", i);
+                    return RWKV_ERROR_IO;
+                }
+
+                // Map output tensors
+                for (size_t j = 0; j < graphInfo.numOutputTensors; j++) {
+                    auto tensorName = std::string(QNN_TENSOR_GET_NAME(graphInfo.outputTensors[j]));
+                    if (tensorName == "out") {
+                        logitsOutputTensorBatchDecode[i] = (Qnn_Tensor_t*)batchDecodeGraphsTensorNameToTensorPointer[i]["out"];
+                    } else if (tensorName.find("state") != std::string::npos) {
+                        stateTensorsNameToTensorPointerBatchDecode[i][tensorName] = (Qnn_Tensor_t*)batchDecodeGraphsTensorNameToTensorPointer[i][tensorName];
+                    }
+                }
+
+                // Calculate tensor sizes for input tensors
+                for (size_t j = 0; j < graphInfo.numInputTensors; j++) {
+                    size_t tensorDataSize = 1;
+                    for (int k = 0; k < QNN_TENSOR_GET_RANK(graphInfo.inputTensors[j]); k++) {
+                        tensorDataSize *= *(QNN_TENSOR_GET_DIMENSIONS(graphInfo.inputTensors[j]) + k);
+                    }
+                    auto tensorName = std::string(QNN_TENSOR_GET_NAME(graphInfo.inputTensors[j]));
+                    size_t typeSize = getQnnDatatypeSize(QNN_TENSOR_GET_DATA_TYPE(graphInfo.inputTensors[j]));
+                    if (typeSize == 0) {
+                        return RWKV_ERROR_IO;
+                    }
+                    tensorDataSize *= typeSize;
+                    batchDecodeGraphsTensorNameToSize[i][tensorName] = tensorDataSize;
+                }
+
+                // Setup shared tensors map for input tensors
+                std::unordered_map<std::string, Qnn_Tensor_t*> sharedInputTensorMap;
+                for (size_t j = 0; j < graphInfo.numInputTensors; j++) {
+                    auto tensorName = std::string(QNN_TENSOR_GET_NAME(graphInfo.inputTensors[j]));
+                    if (tensorName.find("state") != std::string::npos) {
+                        auto stateName = tensorName.substr(0, tensorName.find("_in")) + "_out";
+                        if (stateTensorsNameToTensorPointerBatchDecode[maxBszIndex].find(stateName) != stateTensorsNameToTensorPointerBatchDecode[maxBszIndex].end()) {
+                            sharedInputTensorMap[tensorName] = stateTensorsNameToTensorPointerBatchDecode[maxBszIndex][stateName];
+                        }
+                    }
+                }
+
+                // Setup input tensors with shared memory
+                if (!qnnIOTensorUtils->setupInputWithSharedTensors(&inputTensorsBatchDecode[i], batchDecodeGraphsTensorNameToTensorPointer[i], graphInfo,
+                                            batchDecodeGraphsTensorNameToSize[i], qnnContextHandles[i], sharedInputTensorMap)) {
+                    LOGE("Error in setting up shared Input Tensors for batch graph %d", i);
+                    return RWKV_ERROR_IO;
+                }
+
+                // Set up token input tensor for this batch size
+                if (batchDecodeGraphsTensorNameToTensorPointer[i].find("in") != batchDecodeGraphsTensorNameToTensorPointer[i].end()) {
+                    tokenInputTensorBatchDecode[i] = (Qnn_Tensor_t*)batchDecodeGraphsTensorNameToTensorPointer[i]["in_bsz" + std::to_string(qnnBatchDecodeSupportedBatchSizes[i])];
+                } else {
+                    LOGE("No token input tensor found in batch graph %d", i);
+                    return RWKV_ERROR_IO;
+                }
+            }
+        }
 
         for (int graph_id = 0; graph_id < qnnDecodeGraphsCount; graph_id++) {
             auto graphInfo     = (*qnnDecodeGraphsInfo)[graph_id];
@@ -1105,10 +1326,39 @@ int qnn_backend::qnn_initialize_tensors() {
                 // LOGI("Output Tensor %zu : %s Type: %d Size: %zu", i, tensorName.c_str(), QNN_TENSOR_GET_DATA_TYPE(graphInfo.outputTensors[i]), tensorDataSize);
             }
 
-            if (!qnnIOTensorUtils->setupOutputTensors(&outputTensors[graph_id], decodeGraphsTensorNameToTensorPointer[graph_id], graphInfo,
-                                          decodeGraphsTensorNameToSize[graph_id], qnnContextHandles[graph_id], false)) {
-                LOGE("Error in setting up Output Tensors");
-                return RWKV_ERROR_IO;
+            if (qnnBatchDecodeSupportedBatchSizes.size() > 0) {
+                // Use shared output tensors when batch decode graphs exist
+                int maxBszIndex = 0;
+                for (int k = 1; k < qnnBatchDecodeSupportedBatchSizes.size(); k++) {
+                    if (qnnBatchDecodeSupportedBatchSizes[k] > qnnBatchDecodeSupportedBatchSizes[maxBszIndex]) {
+                        maxBszIndex = k;
+                    }
+                }
+                
+                std::unordered_map<std::string, Qnn_Tensor_t*> sharedOutputTensorMap;
+                for (size_t i = 0; i < graphInfo.numOutputTensors; i++) {
+                    auto tensorName = std::string(QNN_TENSOR_GET_NAME(graphInfo.outputTensors[i]));
+                    if (tensorName == "out") {
+                        sharedOutputTensorMap[tensorName] = logitsOutputTensorBatchDecode[maxBszIndex];
+                    } else if (tensorName.find("state") != std::string::npos) {
+                        if (stateTensorsNameToTensorPointerBatchDecode[maxBszIndex].find(tensorName) != stateTensorsNameToTensorPointerBatchDecode[maxBszIndex].end()) {
+                            sharedOutputTensorMap[tensorName] = stateTensorsNameToTensorPointerBatchDecode[maxBszIndex][tensorName];
+                        }
+                    }
+                }
+                
+                if (!qnnIOTensorUtils->setupOutputWithSharedTensors(&outputTensors[graph_id], decodeGraphsTensorNameToTensorPointer[graph_id], graphInfo,
+                                              decodeGraphsTensorNameToSize[graph_id], qnnContextHandles[graph_id], sharedOutputTensorMap)) {
+                    LOGE("Error in setting up shared Output Tensors for decode graph %d", graph_id);
+                    return RWKV_ERROR_IO;
+                }
+            } else {
+                // Original behavior when no batch decode graphs
+                if (!qnnIOTensorUtils->setupOutputTensors(&outputTensors[graph_id], decodeGraphsTensorNameToTensorPointer[graph_id], graphInfo,
+                                              decodeGraphsTensorNameToSize[graph_id], qnnContextHandles[graph_id], false)) {
+                    LOGE("Error in setting up Output Tensors");
+                    return RWKV_ERROR_IO;
+                }
             }
 
             for (size_t i = 0; i < graphInfo.numOutputTensors; i++) {
@@ -1593,6 +1843,10 @@ int qnn_backend::execute_emb_prefill_graph() {
     return execute_graph(qnnEmbdPrefillGraphsInfo, qnnEmbdPrefillGraphsCount, inputTensorsEmbdPrefill, outputTensorsEmbdPrefill);
 }
 
+int qnn_backend::execute_batch_decode_graph(int idx) {
+    return execute_graph(&qnnBatchDecodeGraphsInfo[idx], 1, &inputTensorsBatchDecode[idx], &outputTensorsBatchDecode[idx]);
+}
+
 int qnn_backend::post_graph_execute(float *& logits) {
     if (logits_buffer.empty()) {
         logits_buffer.resize(vocab_size);
@@ -1601,10 +1855,7 @@ int qnn_backend::post_graph_execute(float *& logits) {
     if (logitsOutputTensorSize == 0) {
         std::vector<size_t> dims;
         getTensorDims(dims, QNN_TENSOR_GET_DIMENSIONS(logitsOutputTensor), QNN_TENSOR_GET_RANK(logitsOutputTensor));
-        logitsOutputTensorSize = 1;
-        for (auto dim : dims) {
-            logitsOutputTensorSize *= dim;
-        }
+        logitsOutputTensorSize = dims[2];
     }
 
 #ifndef _WIN32
@@ -1916,12 +2167,79 @@ int qnn_backend::eval_with_embeddings(const float *embeddings, int n_tokens, flo
     return post_graph_execute(logits);
 }
 
+int qnn_backend::eval_batch(std::vector<std::vector<int>> ids, float *& logits) {
+    if (qnnBatchDecodeSupportedBatchSizes.size() == 0) {
+        return RWKV_ERROR_UNSUPPORTED;
+    }
+    int batch_size = ids.size();
+    int graph_idx = -1;
+    for (int i = 0; i < qnnBatchDecodeSupportedBatchSizes.size(); i++) {
+        if (qnnBatchDecodeSupportedBatchSizes[i] >= batch_size) {
+            graph_idx = i;
+            break;
+        }
+    }
+    if (graph_idx == -1) {
+        LOGE("No graph found for batch size %d", batch_size);
+        return RWKV_ERROR_UNSUPPORTED;
+    }
+
+    for (int i = 0; i < batch_size; i++) {
+        if (ids[i].size() != 1) {
+            LOGE("eval_batch with prefilling is not supported yet");
+            return RWKV_ERROR_UNSUPPORTED;
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_qnn_backend_context_ptr->qnnMutex);
+        if (!isTensorInitialized) {
+            LOGD("qnn_backend::eval() isTensorInitialized: %d", isTensorInitialized);
+            return RWKV_ERROR_EVAL;
+        }
+
+        int *token_input = (int*)qnnIOTensorUtils->getBuffer(tokenInputTensorBatchDecode[graph_idx]);
+        if (token_input == nullptr) {
+            LOGE("Failed to get tokenInputTensor");
+            return RWKV_ERROR_IO;
+        }
+        for (int b = 0; b < ids.size(); b++) {
+            token_input[b] = ids[b][0];
+        }
+
+        if (RWKV_SUCCESS != execute_batch_decode_graph(graph_idx)) {
+            return RWKV_ERROR_EVAL;
+        }
+    }
+
+    // return post_graph_execute_batch(logits);
+    if (logits_buffer.size() < vocab_size * batch_size) {
+        logits_buffer.resize(vocab_size * batch_size);
+    }
+
+    if (logitsOutputTensorSize == 0) {
+        std::vector<size_t> dims;
+        getTensorDims(dims, QNN_TENSOR_GET_DIMENSIONS(logitsOutputTensorBatchDecode[graph_idx]), QNN_TENSOR_GET_RANK(logitsOutputTensorBatchDecode[graph_idx]));
+        logitsOutputTensorSize = dims[2];
+    }
+
+    {
+        if (RWKV_SUCCESS != copy_qnn_tensor_to_float(logitsOutputTensorBatchDecode[graph_idx], logits_buffer.data(), vocab_size * batch_size)) {
+            return RWKV_ERROR_IO;
+        }
+    }
+    logits = logits_buffer.data();
+    return RWKV_SUCCESS;
+}
+
 bool qnn_backend::is_available() {
     // TODO: Detect this
     return true;
 }
 
 int qnn_backend::zero_state() {
+    if (qnnBatchDecodeSupportedBatchSizes.size() > 0)
+        return zero_state_on_batch_slot(0);
+
     if (!isTensorInitialized) return RWKV_SUCCESS;
     for (auto &[tensorName, tensor] : stateTensorsNameToTensorPointer) {
         size_t element_count = 1;
@@ -1945,6 +2263,9 @@ int qnn_backend::zero_state() {
 }
 
 int qnn_backend::get_state(std::any &state) {
+    if (qnnBatchDecodeSupportedBatchSizes.size() > 0)
+        return get_state_on_batch_slot(0, state);
+
     auto new_state = std::vector<std::vector<uint8_t>>();
     for (int i = 0; i < 3 * n_layers; i++) {
         Qnn_Tensor_t *tensor = (Qnn_Tensor_t*)stateTensorsNameToTensorPointer["state" + std::to_string(i) + "_out"];
@@ -1960,6 +2281,9 @@ int qnn_backend::get_state(std::any &state) {
 }
 
 int qnn_backend::set_state(std::any state) {
+    if (qnnBatchDecodeSupportedBatchSizes.size() > 0)
+        return set_state_on_batch_slot(0, state);
+
     if (!state.has_value()) return RWKV_SUCCESS;
     auto new_state = std::any_cast<std::vector<std::vector<uint8_t>>>(state);
     for (int i = 0; i < 3 * n_layers; i++) {
@@ -1981,6 +2305,112 @@ int qnn_backend::free_state(std::any state) {
         s.clear();
     }
     new_state.clear();
+    return RWKV_SUCCESS;
+}
+
+int qnn_backend::get_state_on_batch_slot(int slot, std::any &state) {
+    if (qnnBatchDecodeSupportedBatchSizes.size() == 0) {
+        return RWKV_ERROR_IO;
+    }
+    int max_supported_bsz_index = std::max_element(qnnBatchDecodeSupportedBatchSizes.begin(), qnnBatchDecodeSupportedBatchSizes.end()) - qnnBatchDecodeSupportedBatchSizes.begin();
+    int max_supported_bsz = qnnBatchDecodeSupportedBatchSizes[max_supported_bsz_index];
+    if (slot >= max_supported_bsz) {
+        return RWKV_ERROR_IO;
+    }
+    auto new_state = std::vector<std::vector<uint8_t>>();
+    for (int i = 0; i < 3 * n_layers; i++) {
+        Qnn_Tensor_t *tensor = (Qnn_Tensor_t*)stateTensorsNameToTensorPointerBatchDecode[max_supported_bsz_index]["state" + std::to_string(i) + "_out"];
+        uint8_t *buffer = (uint8_t*)qnnIOTensorUtils->getBuffer(tensor);
+        if (buffer == nullptr) {
+            LOGE("%s: Failed to get buffer for state tensor %i", __func__, i);
+            return RWKV_ERROR_IO;
+        }
+        size_t total_size = qnnIOTensorUtils->getBufferSize(tensor);
+        size_t size_per_slot = total_size / max_supported_bsz;
+        size_t offset = size_per_slot * slot;
+        new_state.push_back(std::vector<uint8_t>(buffer + offset, buffer + offset + size_per_slot));
+    }
+    state = new_state;
+    return RWKV_SUCCESS;
+}
+
+int qnn_backend::set_state_on_batch_slot(int slot, std::any state) {
+    if (!state.has_value()) return RWKV_SUCCESS;
+    if (qnnBatchDecodeSupportedBatchSizes.size() == 0) {
+        return RWKV_ERROR_IO;
+    }
+    int max_supported_bsz_index = std::max_element(qnnBatchDecodeSupportedBatchSizes.begin(), qnnBatchDecodeSupportedBatchSizes.end()) - qnnBatchDecodeSupportedBatchSizes.begin();
+    int max_supported_bsz = qnnBatchDecodeSupportedBatchSizes[max_supported_bsz_index];
+    if (slot >= max_supported_bsz) {
+        return RWKV_ERROR_IO;
+    }
+    auto new_state = std::any_cast<std::vector<std::vector<uint8_t>>>(state);
+    for (int i = 0; i < 3 * n_layers; i++) {
+        Qnn_Tensor_t *tensor = (Qnn_Tensor_t*)stateTensorsNameToTensorPointerBatchDecode[max_supported_bsz_index]["state" + std::to_string(i) + "_out"];
+        void *buffer = qnnIOTensorUtils->getBuffer(tensor);
+        if (buffer == nullptr) {
+            LOGE("%s: Failed to get buffer for state tensor %i", __func__, i);
+            return RWKV_ERROR_IO;
+        }
+        size_t total_size = qnnIOTensorUtils->getBufferSize(tensor);
+        size_t size_per_slot = total_size / max_supported_bsz;
+        size_t offset = size_per_slot * slot;
+        memcpy((uint8_t*)buffer + offset, new_state[i].data(), new_state[i].size());
+    }
+    return RWKV_SUCCESS;
+}
+
+int qnn_backend::zero_state_on_batch_slot(int slot) {
+    if (qnnBatchDecodeSupportedBatchSizes.size() == 0) {
+        return RWKV_ERROR_IO;
+    }
+    int max_supported_bsz_index = std::max_element(qnnBatchDecodeSupportedBatchSizes.begin(), qnnBatchDecodeSupportedBatchSizes.end()) - qnnBatchDecodeSupportedBatchSizes.begin();
+    int max_supported_bsz = qnnBatchDecodeSupportedBatchSizes[max_supported_bsz_index];
+    if (slot >= max_supported_bsz) {
+        return RWKV_ERROR_IO;
+    }
+
+    // for (int i = 0; i < 3 * n_layers; i++) {
+    //     Qnn_Tensor_t *tensor = (Qnn_Tensor_t*)stateTensorsNameToTensorPointerBatchDecode[max_supported_bsz_index]["state" + std::to_string(i) + "_out"];
+    //     void *buffer = qnnIOTensorUtils->getBuffer(tensor);
+    //     if (buffer == nullptr) {
+    //         LOGE("%s: Failed to get buffer for state tensor %i", __func__, i);
+    //         return RWKV_ERROR_IO;
+    //     }
+    //     size_t total_size = qnnIOTensorUtils->getBufferSize(tensor);
+    //     size_t size_per_slot = total_size / max_supported_bsz;
+    //     size_t offset = size_per_slot * slot;
+    //     memset((uint8_t*)buffer + offset, 0, size_per_slot);
+    // }
+    for (auto &[tensorName, tensor] : stateTensorsNameToTensorPointerBatchDecode[max_supported_bsz_index]) {
+        size_t element_count = 1;
+        Qnn_Tensor_t *qnntensor = (Qnn_Tensor_t*)tensor;
+        for (int j = 0; j < QNN_TENSOR_GET_RANK(qnntensor); j++) {
+            element_count *= *(QNN_TENSOR_GET_DIMENSIONS(qnntensor) + j);
+        }
+        uint8_t *buffer = (uint8_t*)qnnIOTensorUtils->getBuffer(qnntensor);
+        if (buffer == nullptr) {
+            LOGE("%s: Failed to get buffer for tensor %s", __func__, tensorName.c_str());
+            return RWKV_ERROR_IO;
+        }
+        size_t total_size = qnnIOTensorUtils->getBufferSize(qnntensor);
+        size_t size_per_slot = total_size / max_supported_bsz;
+        size_t offset = size_per_slot * slot;
+        if (QNN_TENSOR_GET_DATA_TYPE(qnntensor) == QNN_DATATYPE_FLOAT_16 || QNN_TENSOR_GET_DATA_TYPE(qnntensor) == QNN_DATATYPE_FLOAT_32)
+            memset(buffer + offset, 0, size_per_slot);
+        else {
+            float fpzero = 0.0;
+            uint16_t qtzero = 0;
+            datautil::floatToTfN<uint16_t>(&qtzero, &fpzero,
+                QNN_TENSOR_GET_QUANT_PARAMS(qnntensor).scaleOffsetEncoding.offset,
+                QNN_TENSOR_GET_QUANT_PARAMS(qnntensor).scaleOffsetEncoding.scale,
+                1);
+            for (int j = 0; j < element_count; j++) {
+                ((uint16_t*)(buffer + offset))[j] = qtzero;
+            }
+        }
+            // fill_quantized_tensor(0.0, qnntensor);
+    }
     return RWKV_SUCCESS;
 }
 
@@ -2041,6 +2471,19 @@ int qnn_backend::release_model() {
 
         freeGraphsInfo(&qnnEmbdGraphsInfo, qnnEmbdGraphsCount);
         qnnEmbdGraphsInfo = nullptr;
+    }
+
+    if (qnnBatchDecodeSupportedBatchSizes.size() > 0) {
+        for (int i = 0; i < qnnBatchDecodeSupportedBatchSizes.size(); i++) {
+            auto graphInfo     = (*qnnBatchDecodeGraphsInfo)[i];
+            qnnIOTensorUtils->tearDownTensors(inputTensorsBatchDecode[i], graphInfo.numInputTensors);
+            qnnIOTensorUtils->tearDownTensors(outputTensorsBatchDecode[i], graphInfo.numOutputTensors);
+            inputTensorsBatchDecode[i]  = nullptr;
+            outputTensorsBatchDecode[i] = nullptr;
+        }
+
+        freeGraphsInfo(&qnnBatchDecodeGraphsInfo, qnnBatchDecodeSupportedBatchSizes.size());
+        qnnBatchDecodeGraphsInfo = nullptr;
     }
 
     for (int i = 0; i < qnnContextHandles.size(); i++) {
