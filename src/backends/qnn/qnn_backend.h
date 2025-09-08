@@ -111,8 +111,17 @@ private:
     uint32_t qnnEmbdPrefillGraphsCount = 0;
     GraphInfo_t **qnnEmbdPrefillGraphsInfo = nullptr;
 
-    std::vector<int> qnnBatchDecodeSupportedBatchSizes;
-    GraphInfo_t **qnnBatchDecodeGraphsInfo = nullptr;
+    uint32_t qnnBatch2DecodeGraphsCount = 0;
+    GraphInfo_t **qnnBatch2DecodeGraphsInfo = nullptr;
+
+    uint32_t qnnBatch4DecodeGraphsCount = 0;
+    GraphInfo_t **qnnBatch4DecodeGraphsInfo = nullptr;
+
+    uint32_t qnnBatch6DecodeGraphsCount = 0;
+    GraphInfo_t **qnnBatch6DecodeGraphsInfo = nullptr;
+
+    uint32_t qnnBatch8DecodeGraphsCount = 0;
+    GraphInfo_t **qnnBatch8DecodeGraphsInfo = nullptr;
 
     uint32_t graphConfigsInfoCount = 0;
     GraphConfigInfo_t **graphConfigsInfo = nullptr;
@@ -129,18 +138,34 @@ private:
     Qnn_Tensor_t *inputTensorsEmbdPrefill[8] = {nullptr};
     Qnn_Tensor_t *outputTensorsEmbdPrefill[8] = {nullptr};
 
-    Qnn_Tensor_t *inputTensorsBatchDecode[8] = {nullptr};
-    Qnn_Tensor_t *outputTensorsBatchDecode[8] = {nullptr};
+    Qnn_Tensor_t *inputTensorsBatch2Decode[8] = {nullptr};
+    Qnn_Tensor_t *outputTensorsBatch2Decode[8] = {nullptr};
+
+    Qnn_Tensor_t *inputTensorsBatch4Decode[8] = {nullptr};
+    Qnn_Tensor_t *outputTensorsBatch4Decode[8] = {nullptr};
+
+    Qnn_Tensor_t *inputTensorsBatch6Decode[8] = {nullptr};
+    Qnn_Tensor_t *outputTensorsBatch6Decode[8] = {nullptr};
+
+    Qnn_Tensor_t *inputTensorsBatch8Decode[8] = {nullptr};
+    Qnn_Tensor_t *outputTensorsBatch8Decode[8] = {nullptr};
 
     Qnn_Tensor_t *logitsOutputTensor = nullptr;
+
+    Qnn_Tensor_t *vFirstTensor = nullptr;
+    Qnn_Tensor_t *vFirstTensorPrefill = nullptr;
+    Qnn_Tensor_t *hiddenStateTensor = nullptr;
+    Qnn_Tensor_t *hiddenStateTensorPrefill = nullptr;
+
+    // input tensors
     Qnn_Tensor_t *tokenInputTensor = nullptr;
     Qnn_Tensor_t *tokenInputTensorPrefill = nullptr;
     Qnn_Tensor_t *tokenInputTensorEmbd = nullptr;
     Qnn_Tensor_t *tokenInputTensorEmbdPrefill = nullptr;
-
     std::unordered_map<int, Qnn_Tensor_t*> tokenInputTensorBatchDecode;
-    std::unordered_map<int, Qnn_Tensor_t*> logitsOutputTensorBatchDecode;
-    std::unordered_map<int, std::unordered_map<std::string, Qnn_Tensor_t*>> stateTensorsNameToTensorPointerBatchDecode;
+
+    std::unordered_map<int, Qnn_Tensor_t*> deepEmbeddingTensors;
+    std::unordered_map<int, Qnn_Tensor_t*> deepEmbeddingPrefillTensors;
 
     IOTensor* qnnIOTensorUtils = nullptr;
 
@@ -154,11 +179,14 @@ private:
     std::vector<std::unordered_map<std::string, size_t>> embdGraphsTensorNameToSize;
     std::vector<std::unordered_map<std::string, void*>> embdPrefillGraphsTensorNameToTensorPointer;
     std::vector<std::unordered_map<std::string, size_t>> embdPrefillGraphsTensorNameToSize;
-    std::vector<std::unordered_map<std::string, void*>> batchDecodeGraphsTensorNameToTensorPointer;
-    std::vector<std::unordered_map<std::string, size_t>> batchDecodeGraphsTensorNameToSize;
-
-    std::unordered_map<int, Qnn_Tensor_t*> deepEmbeddingTensors;
-    std::unordered_map<int, Qnn_Tensor_t*> deepEmbeddingPrefillTensors;
+    std::vector<std::unordered_map<std::string, void*>> batch2DecodeGraphsTensorNameToTensorPointer;
+    std::vector<std::unordered_map<std::string, size_t>> batch2DecodeGraphsTensorNameToSize;
+    std::vector<std::unordered_map<std::string, void*>> batch4DecodeGraphsTensorNameToTensorPointer;
+    std::vector<std::unordered_map<std::string, size_t>> batch4DecodeGraphsTensorNameToSize;
+    std::vector<std::unordered_map<std::string, void*>> batch6DecodeGraphsTensorNameToTensorPointer;
+    std::vector<std::unordered_map<std::string, size_t>> batch6DecodeGraphsTensorNameToSize;
+    std::vector<std::unordered_map<std::string, void*>> batch8DecodeGraphsTensorNameToTensorPointer;
+    std::vector<std::unordered_map<std::string, size_t>> batch8DecodeGraphsTensorNameToSize;
 
     std::unordered_map<std::string, void*> stateTensorsNameToTensorPointer;
 
@@ -166,12 +194,35 @@ private:
 
     void fill_quantized_tensor(float value, Qnn_Tensor_t *tensor);
 
+    int populate_tensor_name_to_size_map(const GraphInfo_t& graphInfo, 
+                                        std::unordered_map<std::string, size_t>& tensorNameToSize,
+                                        bool isInputTensors);
+
+    // Helper functions for tensor initialization
+    int setup_output_tensors_for_graph(int graph_id, int total_graphs_count, const GraphInfo_t& graphInfo,
+                                       Qnn_Tensor_t** outputTensors, 
+                                       std::unordered_map<std::string, void*>& tensorNameToTensorPointer,
+                                       std::unordered_map<std::string, size_t>& tensorNameToSize,
+                                       Qnn_ContextHandle_t contextHandle,
+                                       Qnn_Tensor_t* vFirstTensorRef, Qnn_Tensor_t* hiddenStateTensorRef,
+                                       bool isPrefill);
+
+    void populate_input_shared_tensor_map(const GraphInfo_t& graphInfo, int graph_id,
+                                          std::unordered_map<std::string, Qnn_Tensor_t*>& sharedTensorMap,
+                                          Qnn_Tensor_t* vFirstTensorRef, Qnn_Tensor_t* hiddenStateTensorRef,
+                                          bool isPrefill);
+
+    void map_deep_embedding_tensors(const GraphInfo_t& graphInfo, int graph_id,
+                                    std::unordered_map<std::string, void*>& tensorNameToTensorPointer,
+                                    std::unordered_map<int, Qnn_Tensor_t*>& deepEmbeddingTensorsRef,
+                                    bool isPrefill);
+
     int execute_graph(GraphInfo_t** graphInfo, int graphsCount, Qnn_Tensor_t** inputTensors, Qnn_Tensor_t** outputTensors);
     int execute_decode_graph();
     int execute_prefill_graph();
     int execute_emb_decode_graph();
     int execute_emb_prefill_graph();
-    int execute_batch_decode_graph(int idx);
+    int execute_batch_decode_graph(int bsz);
 
     int copy_deep_embedding_to_qnn_tensor_decode(int idx);
     int copy_deep_embedding_to_qnn_tensor_prefill(int idx, int token_offset);
