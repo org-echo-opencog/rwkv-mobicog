@@ -50,7 +50,7 @@ public:
     int version;
     int vocab_size;
 
-    std::vector<int> supported_batch_sizes = {};
+    std::vector<int> supported_batch_sizes = {1};
 
     std::string extra_str;
 

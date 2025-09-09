@@ -713,16 +713,19 @@ int qnn_backend::load_model(std::string model_path) {
                     qnnBatch2DecodeGraphsCount++;
                 } else if (graphName.find("bsz4") != std::string::npos) {
                     if (i == 0) {
+                        supported_batch_sizes.push_back(3);
                         supported_batch_sizes.push_back(4);
                     }
                     qnnBatch4DecodeGraphsCount++;
                 } else if (graphName.find("bsz6") != std::string::npos) {
                     if (i == 0) {
+                        supported_batch_sizes.push_back(5);
                         supported_batch_sizes.push_back(6);
                     }
                     qnnBatch6DecodeGraphsCount++;
                 } else if (graphName.find("bsz8") != std::string::npos) {
                     if (i == 0) {
+                        supported_batch_sizes.push_back(7);
                         supported_batch_sizes.push_back(8);
                     }
                     qnnBatch8DecodeGraphsCount++;
@@ -1955,13 +1958,13 @@ int qnn_backend::execute_emb_prefill_graph() {
 }
 
 int qnn_backend::execute_batch_decode_graph(int bsz) {
-    if (bsz == 2) {
+    if (bsz <= 2) {
         return execute_graph(qnnBatch2DecodeGraphsInfo, qnnBatch2DecodeGraphsCount, inputTensorsBatch2Decode, outputTensorsBatch2Decode);
-    } else if (bsz == 4) {
+    } else if (bsz <= 4) {
         return execute_graph(qnnBatch4DecodeGraphsInfo, qnnBatch4DecodeGraphsCount, inputTensorsBatch4Decode, outputTensorsBatch4Decode);
-    } else if (bsz == 6) {
+    } else if (bsz <= 6) {
         return execute_graph(qnnBatch6DecodeGraphsInfo, qnnBatch6DecodeGraphsCount, inputTensorsBatch6Decode, outputTensorsBatch6Decode);
-    } else if (bsz == 8) {
+    } else if (bsz <= 8) {
         return execute_graph(qnnBatch8DecodeGraphsInfo, qnnBatch8DecodeGraphsCount, inputTensorsBatch8Decode, outputTensorsBatch8Decode);
     } else {
         LOGE("QNN: unsupported batch size: %d", bsz);
@@ -2309,7 +2312,7 @@ int qnn_backend::eval_batch(std::vector<std::vector<int>> ids, float *& logits) 
             return RWKV_ERROR_EVAL;
         }
 
-        int *token_input = (int*)qnnIOTensorUtils->getBuffer(tokenInputTensorBatchDecode[batch_size]);
+        int *token_input = (int*)qnnIOTensorUtils->getBuffer(tokenInputTensorBatchDecode[(batch_size + 1) & ~1]); // ceil to nearest even number
         if (token_input == nullptr) {
             LOGE("Failed to get tokenInputTensor");
             return RWKV_ERROR_IO;
