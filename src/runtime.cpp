@@ -423,6 +423,9 @@ int runtime::eval_logits_with_embeddings(int model_id, const float *embeddings, 
 }
 
 int runtime::eval_logits_batch_decode(int model_id, std::vector<int> ids, float *& logits) {
+    if (ids.size() == 1) {
+        return eval_logits(model_id, ids[0], logits);
+    }
     if (_models.find(model_id) == _models.end()) {
         return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
     }
@@ -766,10 +769,21 @@ int runtime::chat_batch(int model_id, std::vector<std::string> inputs, const int
     std::vector<std::any> state_to_save(batch_size);
 
     std::vector<bool> thinking_end_tag_found_batch(batch_size, false);
+
+    int current_batch_size = batch_size;
+    std::vector<int> active_batch_indices;
+    std::vector<int> original_to_active_mapping(batch_size, -1);
+
+    for (int j = 0; j < batch_size; j++) {
+        active_batch_indices.push_back(j);
+        original_to_active_mapping[j] = j;
+    }
+
     for (int i = 0; i < max_length; i++) {
         if (i != 0) {
-            for (int j = 0; j < batch_size; j++) {
-                model->sampler->apply_penalties(logits + j * num_vocab, num_vocab, occurences_batch[j],
+            for (int j = 0; j < current_batch_size; j++) {
+                int original_j = active_batch_indices[j];
+                model->sampler->apply_penalties(logits + j * num_vocab, num_vocab, occurences_batch[original_j],
                     model->sampler->get_token_banned(), model->sampler->get_presence_penalty(),
                     model->sampler->get_frequency_penalty(), model->sampler->get_penalty_decay());
 
@@ -778,36 +792,110 @@ int runtime::chat_batch(int model_id, std::vector<std::string> inputs, const int
                 }
             }
 
-            decoded_idx = model->sampler->sample_batch(logits, model->backend->get_num_vocab(), model->backend->get_num_vocab(), batch_size);
+            decoded_idx = model->sampler->sample_batch(logits, model->backend->get_num_vocab(), model->backend->get_num_vocab(), current_batch_size);
         }
 
-        for (int j = 0; j < batch_size; j++) {
+        for (int j = 0; j < current_batch_size; j++) {
+            int original_j = active_batch_indices[j];
             if (decoded_idx[j] == 0) {
-                model->response_buffer_eos_found_batch[j] = true;
+                model->response_buffer_eos_found_batch[original_j] = true;
+                std::any state_end;
+                model->backend->get_state_on_batch_slot(j, state_end);
+                state_to_save[original_j] = std::move(state_end);
             }
 
-            if (!model->response_buffer_eos_found_batch[j]) {
+            if (!model->response_buffer_eos_found_batch[original_j]) {
                 std::string decoded = model->tokenizer->decode(decoded_idx[j]);
-                std::string tmp = model->response_buffer_batch[j] + decoded;
+                std::string tmp = model->response_buffer_batch[original_j] + decoded;
                 for (auto &stop_code : model->stop_codes) {
-                    if (enable_reasoning && !thinking_end_tag_found_batch[j] && stop_code == "\n\n") {
+                    if (enable_reasoning && !thinking_end_tag_found_batch[original_j] && stop_code == "\n\n") {
                         continue;
                     }
                     if (tmp.size() >= stop_code.size() &&
                         tmp.compare(tmp.size() - stop_code.size(), stop_code.size(), stop_code) == 0) {
-                        LOGD("stop code found for batch %d: %s\n", j, stop_code.c_str());
-                        model->response_buffer_eos_found_batch[j] = true;
+                        LOGD("stop code found for batch %d: %s\n", original_j, stop_code.c_str());
+                        model->response_buffer_eos_found_batch[original_j] = true;
                         std::any state_end;
                         model->backend->get_state_on_batch_slot(j, state_end);
-                        state_to_save[j] = std::move(state_end);
+                        state_to_save[original_j] = std::move(state_end);
                         break;
                     }
                 }
 
-                if (enable_reasoning && !thinking_end_tag_found_batch[j]) {
+                if (enable_reasoning && !thinking_end_tag_found_batch[original_j]) {
                     if (tmp.find("</think>") != std::string::npos) {
-                        thinking_end_tag_found_batch[j] = true;
+                        thinking_end_tag_found_batch[original_j] = true;
                     }
+                }
+            }
+        }
+
+        std::vector<int> new_active_batch_indices;
+        for (int j = 0; j < batch_size; j++) {
+            if (!model->response_buffer_eos_found_batch[j]) {
+                new_active_batch_indices.push_back(j);
+            }
+        }
+
+        int new_active_count = new_active_batch_indices.size();
+        if (new_active_count > 0 && new_active_count < current_batch_size) {
+            bool new_size_supported = false;
+            for (auto size : model->backend->supported_batch_sizes) {
+                if (new_active_count == size) {
+                    new_size_supported = true;
+                    break;
+                }
+            }
+
+            if (new_size_supported) {
+                LOGI("Switching from batch size %d to %d, active batches: ", current_batch_size, new_active_count);
+                for (auto idx : new_active_batch_indices) {
+                    LOGI("%d ", idx);
+                }
+
+                // get state for new active batches
+                std::vector<std::any> temp_states(new_active_count);
+                for (int k = 0; k < new_active_count; k++) {
+                    int original_slot = new_active_batch_indices[k];
+                    model->backend->get_state_on_batch_slot(original_slot, temp_states[k]);
+                }
+
+                // rearrange logits for new active batches
+                std::vector<float> temp_logits(new_active_count * num_vocab);
+                for (int k = 0; k < new_active_count; k++) {
+                    int original_slot = new_active_batch_indices[k];
+                    // copy logits from original slot to new position
+                    memcpy(temp_logits.data() + k * num_vocab, 
+                           logits + original_slot * num_vocab, 
+                           num_vocab * sizeof(float));
+                }
+                // copy rearranged logits back
+                memcpy(logits, temp_logits.data(), new_active_count * num_vocab * sizeof(float));
+
+                // rearrange decoded_idx for new active batches
+                std::vector<int> temp_decoded_idx(new_active_count);
+                for (int k = 0; k < new_active_count; k++) {
+                    int original_slot = new_active_batch_indices[k];
+                    temp_decoded_idx[k] = decoded_idx[original_slot];
+                }
+                // copy rearranged decoded_idx back
+                for (int k = 0; k < new_active_count; k++) {
+                    decoded_idx[k] = temp_decoded_idx[k];
+                }
+
+                // rearrange active state to corresponding slots
+                for (int k = 0; k < new_active_count; k++) {
+                    model->backend->set_state_on_batch_slot(k, temp_states[k]);
+                    model->backend->free_state(temp_states[k]);
+                }
+
+                // update active batch indices and mapping
+                active_batch_indices = new_active_batch_indices;
+                current_batch_size = new_active_count;
+
+                original_to_active_mapping.assign(batch_size, -1);
+                for (int k = 0; k < new_active_count; k++) {
+                    original_to_active_mapping[active_batch_indices[k]] = k;
                 }
             }
         }
@@ -822,27 +910,39 @@ int runtime::chat_batch(int model_id, std::vector<std::string> inputs, const int
             model->backend->free_logits_if_allocated(logits);
         }
 
-        ret = eval_logits_batch_decode(model_id, decoded_idx, logits);
+        std::vector<int> active_decoded_idx(decoded_idx.begin(), decoded_idx.begin() + current_batch_size);
+        ret = eval_logits_batch_decode(model_id, active_decoded_idx, logits);
         if (ret) return ret;
 
-        for (int j = 0; j < batch_size; j++) {
-            if (model->response_buffer_eos_found_batch[j]) {
+        for (int j = 0; j < current_batch_size; j++) {
+            int original_j = active_batch_indices[j];
+            if (model->response_buffer_eos_found_batch[original_j]) {
                 continue;
             }
-            response_ids_raw_batch[j].emplace_back(decoded_idx[j]);
-            model->response_buffer_batch[j] += model->tokenizer->decode(decoded_idx[j]);
-            model->response_buffer_ids_batch[j].emplace_back(decoded_idx[j]);
-            if (i == 0 && model->response_buffer_batch[j][0] == ' ') {
-                model->response_buffer_batch[j] = model->response_buffer_batch[j].substr(1);
+            response_ids_raw_batch[original_j].emplace_back(decoded_idx[j]);
+            model->response_buffer_batch[original_j] += model->tokenizer->decode(decoded_idx[j]);
+            model->response_buffer_ids_batch[original_j].emplace_back(decoded_idx[j]);
+            if (i == 0 && model->response_buffer_batch[original_j][0] == ' ') {
+                model->response_buffer_batch[original_j] = model->response_buffer_batch[original_j].substr(1);
             }
 
-            occurences_batch[j][decoded_idx[j]]++;
+            occurences_batch[original_j][decoded_idx[j]]++;
         }
 
         // TODO: callback_batch
         // if (callback) {
         //     callback(model->response_buffer.c_str(), decoded_idx, decoded.c_str());
         // }
+    }
+
+    // save state for not finished batches
+    for (int j = 0; j < batch_size; j++) {
+        if (!model->response_buffer_eos_found_batch[j] && !state_to_save[j].has_value()) {
+            int active_slot = original_to_active_mapping[j];
+            if (active_slot >= 0) {
+                model->backend->get_state_on_batch_slot(active_slot, state_to_save[j]);
+            }
+        }
     }
 
     if (response_ids_raw_batch[0].size() > 0) {
