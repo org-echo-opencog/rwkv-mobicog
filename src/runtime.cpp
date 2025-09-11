@@ -1058,6 +1058,11 @@ int runtime::set_image_prompt(int model_id, std::string path) {
     if (ret) {
         return ret;
     }
+    // "<|vision_end|>"
+    ret = eval_logits(model_id, 65530, logits);
+    if (ret) {
+        return ret;
+    }
     end = std::chrono::high_resolution_clock::now();
     LOGI("eval_logits_with_embeddings duration: %lld ms", std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count());
     model->backend->get_state(model->backend->state_head->next->state);
