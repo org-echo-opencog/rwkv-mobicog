@@ -423,9 +423,6 @@ int runtime::eval_logits_with_embeddings(int model_id, const float *embeddings, 
 }
 
 int runtime::eval_logits_batch_decode(int model_id, std::vector<int> ids, float *& logits) {
-    if (ids.size() == 1) {
-        return eval_logits(model_id, ids[0], logits);
-    }
     if (_models.find(model_id) == _models.end()) {
         return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
     }
