@@ -543,9 +543,18 @@ int runtime::chat(int model_id, std::vector<std::string> inputs, const int max_l
         int checkpoint_interval = 256;
         for (int i = 0; i < tokens_to_prefill.size(); i += checkpoint_interval) {
             std::vector<int> tokens_to_prefill_chunk = std::vector<int>(tokens_to_prefill.begin() + i, tokens_to_prefill.begin() + std::min(i + checkpoint_interval, (int)tokens_to_prefill.size()));
-            eval_logits(model_id, tokens_to_prefill_chunk, logits);
-            int ret = model->backend->register_state_checkpoint(node, tokens_to_prefill_chunk, logits);
-            if (ret) return ret;
+            int ret = eval_logits(model_id, tokens_to_prefill_chunk, logits);
+            if (ret) {
+                model->is_generating = false;
+                LOGE("failed to eval logits\n");
+                return ret;
+            }
+            ret = model->backend->register_state_checkpoint(node, tokens_to_prefill_chunk, logits);
+            if (ret) {
+                model->is_generating = false;
+                LOGE("failed to register state checkpoint\n");
+                return ret;
+            }
             model->backend->free_logits_if_allocated(logits);
         }
     }
@@ -570,7 +579,11 @@ int runtime::chat(int model_id, std::vector<std::string> inputs, const int max_l
         } else {
             LOGE("no logits found, neither from saved state nor from new tokens to prefill\n");
             ret = eval_logits(model_id, text_ids.back(), logits);
-            if (ret) return ret;
+            if (ret) {
+                model->is_generating = false;
+                LOGE("failed to eval logits\n");
+                return ret;
+            }
             response_ids_raw.emplace_back(text_ids.back());
         }
     }
@@ -623,7 +636,11 @@ int runtime::chat(int model_id, std::vector<std::string> inputs, const int max_l
             model->backend->free_logits_if_allocated(logits);
         }
         ret = eval_logits(model_id, decoded_idx, logits);
-        if (ret) return ret;
+        if (ret) {
+            model->is_generating = false;
+            LOGE("failed to eval logits\n");
+            return ret;
+        }
 
         response_ids_raw.emplace_back(decoded_idx);
         model->response_buffer += decoded;
@@ -640,7 +657,11 @@ int runtime::chat(int model_id, std::vector<std::string> inputs, const int max_l
 
     if (response_ids_raw.size() > 0) {
         int ret = model->backend->register_state_checkpoint(node, response_ids_raw, logits);
-        if (ret) return ret;
+        if (ret) {
+            model->is_generating = false;
+            LOGE("failed to register state checkpoint\n");
+            return ret;
+        }
     }
 
     if (logits != node->last_logits.data()) {
@@ -711,9 +732,18 @@ int runtime::chat_batch(int model_id, std::vector<std::string> inputs, const int
         int checkpoint_interval = 256;
         for (int i = 0; i < tokens_to_prefill.size(); i += checkpoint_interval) {
             std::vector<int> tokens_to_prefill_chunk = std::vector<int>(tokens_to_prefill.begin() + i, tokens_to_prefill.begin() + std::min(i + checkpoint_interval, (int)tokens_to_prefill.size()));
-            eval_logits(model_id, tokens_to_prefill_chunk, logits);
-            int ret = model->backend->register_state_checkpoint(node, tokens_to_prefill_chunk, logits);
-            if (ret) return ret;
+            int ret = eval_logits(model_id, tokens_to_prefill_chunk, logits);
+            if (ret) {
+                model->is_generating = false;
+                LOGE("failed to eval logits\n");
+                return ret;
+            }
+            ret = model->backend->register_state_checkpoint(node, tokens_to_prefill_chunk, logits);
+            if (ret) {
+                model->is_generating = false;
+                LOGE("failed to register state checkpoint\n");
+                return ret;
+            }
             model->backend->free_logits_if_allocated(logits);
         }
     }
@@ -739,7 +769,11 @@ int runtime::chat_batch(int model_id, std::vector<std::string> inputs, const int
         } else {
             LOGE("no logits found, neither from saved state nor from new tokens to prefill\n");
             ret = eval_logits(model_id, text_ids.back(), logits);
-            if (ret) return ret;
+            if (ret) {
+                model->is_generating = false;
+                LOGE("failed to eval logits\n");
+                return ret;
+            }
         }
     }
 
@@ -909,7 +943,11 @@ int runtime::chat_batch(int model_id, std::vector<std::string> inputs, const int
 
         std::vector<int> active_decoded_idx(decoded_idx.begin(), decoded_idx.begin() + current_batch_size);
         ret = eval_logits_batch_decode(model_id, active_decoded_idx, logits);
-        if (ret) return ret;
+        if (ret) {
+            model->is_generating = false;
+            LOGE("failed to eval logits\n");
+            return ret;
+        }
 
         for (int j = 0; j < current_batch_size; j++) {
             int original_j = active_batch_indices[j];
@@ -944,7 +982,11 @@ int runtime::chat_batch(int model_id, std::vector<std::string> inputs, const int
 
     if (response_ids_raw_batch[0].size() > 0) {
         int ret = model->backend->register_batch_state_checkpoint(node, state_to_save, response_ids_raw_batch, logits);
-        if (ret) return ret;
+        if (ret) {
+            model->is_generating = false;
+            LOGE("failed to register batch state checkpoint\n");
+            return ret;
+        }
     }
 
     if (logits != node->last_logits.data()) {
@@ -1901,6 +1943,11 @@ int runtime::gen_completion(int model_id, std::string prompt, int max_length, in
         model->response_buffer += next;
         model->response_buffer_ids.push_back(idx);
         ret = eval_logits(model_id, idx, logits);
+        if (ret) {
+            model->is_generating = false;
+            LOGE("failed to eval logits\n");
+            return ret;
+        }
         if (callback) {
             callback(model->response_buffer.c_str(), idx, next.c_str());
         }
