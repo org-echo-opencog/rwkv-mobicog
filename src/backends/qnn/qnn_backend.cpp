@@ -1342,7 +1342,7 @@ void qnn_backend::map_deep_embedding_tensors(const GraphInfo_t& graphInfo, int g
             if (isPrefill) {
                 logMessage += "_prefill";
             }
-            LOGI("%s", logMessage.c_str());
+            LOGD("%s", logMessage.c_str());
             deepEmbeddingTensorsRef[layer_id] = (Qnn_Tensor_t*)tensorNameToTensorPointer[tensorName];
         }
     }
@@ -2494,18 +2494,6 @@ int qnn_backend::zero_state_on_batch_slot(int slot) {
         return RWKV_ERROR_IO;
     }
 
-    for (int i = 0; i < 3 * n_layers; i++) {
-        Qnn_Tensor_t *tensor = (Qnn_Tensor_t*)stateTensorsNameToTensorPointer["state" + std::to_string(i) + "_out"];
-        void *buffer = qnnIOTensorUtils->getBuffer(tensor);
-        if (buffer == nullptr) {
-            LOGE("%s: Failed to get buffer for state tensor %i", __func__, i);
-            return RWKV_ERROR_IO;
-        }
-        size_t total_size = qnnIOTensorUtils->getBufferSize(tensor);
-        size_t size_per_slot = total_size / max_supported_bsz;
-        size_t offset = size_per_slot * slot;
-        memset((uint8_t*)buffer + offset, 0, size_per_slot);
-    }
     for (auto &[tensorName, tensor] : stateTensorsNameToTensorPointer) {
         size_t element_count = 1;
         Qnn_Tensor_t *qnntensor = (Qnn_Tensor_t*)tensor;
@@ -2533,7 +2521,6 @@ int qnn_backend::zero_state_on_batch_slot(int slot) {
                 ((uint16_t*)(buffer + offset))[j] = qtzero;
             }
         }
-            // fill_quantized_tensor(0.0, qnntensor);
     }
     return RWKV_SUCCESS;
 }
@@ -2644,6 +2631,7 @@ int qnn_backend::release_model() {
             LOGE("Could not free context");
         }
     }
+    qnnContextHandles.clear();
 
     for (int i = 0; i < graphConfigsInfoCount; i++) {
         delete graphConfigsInfo[i];
@@ -2655,6 +2643,10 @@ int qnn_backend::release_model() {
     if (qnnModelHandle)
         pal::dynamicloading::dlClose(qnnModelHandle);
 
+    tokenInputTensorBatchDecode.clear();
+    deepEmbeddingTensors.clear();
+    deepEmbeddingPrefillTensors.clear();
+    stateTensorsNameToTensorPointer.clear();
     return RWKV_SUCCESS;
 }
 
