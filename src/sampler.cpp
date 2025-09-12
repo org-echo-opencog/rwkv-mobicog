@@ -120,10 +120,13 @@ void NucleusSampler::set_seed(int seed) {
 }
 
 void NucleusSampler::update_occurences(int token) {
-    _occurences[token]++;
+    if (_occurences.find(token) == _occurences.end()) {
+        _occurences[token] = 0;
+    }
+    _occurences[token] += 1.0f;
 }
 
-void NucleusSampler::apply_penalties(float * logits, const size_t size, std::map<int, float> occurences, std::vector<int> token_banned, float presence_penalty, float frequency_penalty, float penalty_decay) {
+void NucleusSampler::apply_penalties(float * logits, const size_t size, std::map<int, float> &occurences, std::vector<int> token_banned, float presence_penalty, float frequency_penalty, float penalty_decay) {
     if (!logits) {
         return;
     }

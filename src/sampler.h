@@ -13,7 +13,7 @@ class NucleusSampler {
 public:
     NucleusSampler();
 
-    void apply_penalties(float * logits, const size_t size, std::map<int, float> occurences, std::vector<int> token_banned, float presence_penalty, float frequency_penalty, float penalty_decay);
+    void apply_penalties(float * logits, const size_t size, std::map<int, float> &occurences, std::vector<int> token_banned, float presence_penalty, float frequency_penalty, float penalty_decay);
 
     void apply_penalties(float * logits, const size_t size);
 
