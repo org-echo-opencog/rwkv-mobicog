@@ -2155,12 +2155,14 @@ int qnn_backend::eval(std::vector<int> ids, float *& logits, bool skip_logits_co
             if (has_deep_embedding) {
                 for (int i = 0; i < embdPrefillSequenceLength; i++) {
                     if (RWKV_SUCCESS != copy_deep_embedding_to_qnn_tensor_prefill(ids[idx + i], i)) {
+                        LOGE("Failed to copy deep embedding to qnn tensor");
                         return RWKV_ERROR_EVAL;
                     }
                 }
             }
 
             if (RWKV_SUCCESS != execute_emb_prefill_graph()) {
+                LOGE("Failed to execute emb prefill graph");
                 return RWKV_ERROR_EVAL;
             }
         }
@@ -2176,11 +2178,13 @@ int qnn_backend::eval(std::vector<int> ids, float *& logits, bool skip_logits_co
 
             if (has_deep_embedding) {
                 if (RWKV_SUCCESS != copy_deep_embedding_to_qnn_tensor_decode(ids[idx])) {
+                    LOGE("Failed to copy deep embedding to qnn tensor");
                     return RWKV_ERROR_EVAL;
                 }
             }
 
             if (RWKV_SUCCESS != execute_emb_decode_graph()) {
+                LOGE("Failed to execute emb decode graph");
                 return RWKV_ERROR_EVAL;
             }
         }
@@ -2188,6 +2192,7 @@ int qnn_backend::eval(std::vector<int> ids, float *& logits, bool skip_logits_co
         if (prefillSequenceLength == 0) {
             for (auto id : ids) {
                 if (RWKV_SUCCESS != eval(id, logits)) {
+                    LOGE("Failed to eval");
                     return RWKV_ERROR_MODEL;
                 }
             }
@@ -2211,6 +2216,7 @@ int qnn_backend::eval(std::vector<int> ids, float *& logits, bool skip_logits_co
                 if (has_deep_embedding) {
                     for (int i = 0; i < prefillSequenceLength; i++) {
                         if (RWKV_SUCCESS != copy_deep_embedding_to_qnn_tensor_prefill(ids[idx + i], i)) {
+                            LOGE("Failed to copy deep embedding to qnn tensor");
                             return RWKV_ERROR_EVAL;
                         }
                     }
@@ -2239,11 +2245,13 @@ int qnn_backend::eval(std::vector<int> ids, float *& logits, bool skip_logits_co
 
                 if (has_deep_embedding) {
                     if (RWKV_SUCCESS != copy_deep_embedding_to_qnn_tensor_decode(ids[idx])) {
+                        LOGE("Failed to copy deep embedding to qnn tensor");
                         return RWKV_ERROR_EVAL;
                     }
                 }
 
                 if (RWKV_SUCCESS != execute_decode_graph()) {
+                    LOGE("Failed to execute decode graph");
                     return RWKV_ERROR_EVAL;
                 }
             }

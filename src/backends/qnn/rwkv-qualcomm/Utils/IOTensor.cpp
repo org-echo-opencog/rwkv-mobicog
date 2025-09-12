@@ -245,14 +245,14 @@ bool IOTensor::setupInputWithSharedTensors(
     if (true == returnStatus) {
       if (sharedTensorMap.find(wrapperTensorName) == sharedTensorMap.end()) {
         size_t tensorDataSize = tensorsSize[wrapperTensorName];
-        // rwkvmobile::LOGI("IoTensor :: Create Buffer for Tensor %s Size: %zu", wrapperTensorName.c_str(), tensorDataSize);
+        rwkvmobile::LOGD("IoTensor :: Create Buffer for Tensor %s Size: %zu", wrapperTensorName.c_str(), tensorDataSize);
         returnStatus =
             m_bufferManager->allocateTensorBuffer(((*tensors) + tensorIdx), tensorDataSize);
       } else {
         std::string inputName = QNN_TENSOR_GET_NAME(sharedTensorMap[wrapperTensorName]);
-        // rwkvmobile::LOGI("IoTensor :: Reuse Buffer %s for Tensor %s",
-        //           inputName.c_str(),
-        //           wrapperTensorName.c_str());
+        rwkvmobile::LOGD("IoTensor :: Reuse Buffer %s for Tensor %s",
+                  inputName.c_str(),
+                  wrapperTensorName.c_str());
         returnStatus = m_bufferManager->useSameMemory(((*tensors) + tensorIdx),
                                                       sharedTensorMap[wrapperTensorName]);
       }
@@ -306,14 +306,14 @@ bool IOTensor::setupOutputWithSharedTensors(
     if (true == returnStatus) {
       if (sharedTensorMap.find(wrapperTensorName) == sharedTensorMap.end()) {
         size_t tensorDataSize = tensorsSize[wrapperTensorName];
-        // rwkvmobile::LOGI("IoTensor :: Create Buffer for Tensor %s Size: %zu", wrapperTensorName.c_str(), tensorDataSize);
+        rwkvmobile::LOGD("IoTensor :: Create Buffer for Tensor %s Size: %zu", wrapperTensorName.c_str(), tensorDataSize);
         returnStatus =
             m_bufferManager->allocateTensorBuffer(((*tensors) + tensorIdx), tensorDataSize);
       } else {
         std::string outputName = QNN_TENSOR_GET_NAME(sharedTensorMap[wrapperTensorName]);
-        // rwkvmobile::LOGI("IoTensor :: Reuse Buffer %s for Tensor %s",
-        //           outputName.c_str(),
-        //           wrapperTensorName.c_str());
+        rwkvmobile::LOGD("IoTensor :: Reuse Buffer %s for Tensor %s",
+                  outputName.c_str(),
+                  wrapperTensorName.c_str());
         returnStatus = m_bufferManager->useSameMemory(((*tensors) + tensorIdx),
                                                       sharedTensorMap[wrapperTensorName]);
       }
