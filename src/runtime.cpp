@@ -176,7 +176,8 @@ int runtime::load_model(std::string model_path, std::string backend_name, std::s
     if (model_instance->backend->state_root == nullptr) {
         return ret_model_id;
     }
-    model_instance->backend->state_root->is_constant = true;
+
+    model_instance->backend->state_root->activation_count = 5;
     model_instance->backend->get_state(model_instance->backend->state_root->state);
     model_instance->backend->state_root->ids = std::vector<int>();
     model_instance->backend->state_root->logits = std::vector<float>(model_instance->backend->vocab_size, 0);
@@ -354,6 +355,7 @@ int runtime::load_initial_state(int model_id, std::string state_path) {
     model->backend->get_state(initial_state);
     // make a new constant state node
     model->backend->state_root->children.push_back(std::make_unique<state_node>(initial_state, initial_state_ids, std::vector<float>(model->backend->vocab_size, 0), true));
+    model->backend->state_root->children.back()->activation_count = 50;
     return RWKV_SUCCESS;
 }
 
@@ -696,6 +698,9 @@ int runtime::chat(int model_id, std::vector<std::string> inputs, const int max_l
 
     model->is_generating = false;
     model->stop_signal = false;
+
+    model->backend->cleanup_state_tree();
+
     return RWKV_SUCCESS;
 }
 
@@ -1021,6 +1026,9 @@ int runtime::chat_batch(int model_id, std::vector<std::string> inputs, const int
 
     model->is_generating = false;
     model->stop_signal = false;
+
+    model->backend->cleanup_state_tree();
+
     return RWKV_SUCCESS;
 }
 

@@ -3,6 +3,7 @@
 #include "commondef.h"
 #include <cstring>
 #include <queue>
+#include <functional>
 
 namespace rwkvmobile {
 
@@ -56,6 +57,7 @@ int execution_provider::register_state_checkpoint(state_node* &node, const std::
     new_node->logits.resize(vocab_size);
     memcpy(new_node->logits.data(), logits, vocab_size * sizeof(float));
     new_node->state = std::move(new_state);
+    new_node->activation_count = node->activation_count;
 
     node->children.push_back(std::move(new_node));
     return RWKV_SUCCESS;
@@ -73,9 +75,38 @@ int execution_provider::register_batch_state_checkpoint(state_node* &node, std::
         new_node->state = std::move(states[i]);
         new_node->logits.resize(vocab_size);
         memcpy(new_node->logits.data(), logits + i * vocab_size, vocab_size * sizeof(float));
+        new_node->activation_count = node->activation_count;
+
         node->children.push_back(std::move(new_node));
     }
     return RWKV_SUCCESS;
+}
+
+void execution_provider::cleanup_state_tree() {
+    if (!state_root) {
+        return;
+    }
+
+    std::function<void(state_node*)> cleanup_node = [&](state_node* node) {
+        if (!node) {
+            return;
+        }
+
+        for (auto it = node->children.begin(); it != node->children.end();) {
+            cleanup_node(it->get());
+
+            if (!(*it)->is_constant && (*it)->activation_count <= 0) {
+                it = node->children.erase(it);
+            } else {
+                if (!(*it)->is_constant) {
+                    (*it)->activation_count--;
+                }
+                ++it;
+            }
+        }
+    };
+
+    cleanup_node(state_root.get());
 }
 
 }
