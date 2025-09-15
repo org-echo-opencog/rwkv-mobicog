@@ -21,7 +21,7 @@ public:
     int activation_count;
 
     state_node() {
-        this->activation_count = 5;
+        this->activation_count = 20;
     };
 
     state_node(const std::any state, const std::vector<int> ids, const std::vector<float> logits, bool is_constant = false) {
@@ -29,7 +29,7 @@ public:
         this->ids = ids;
         this->logits = logits;
         this->is_constant = is_constant;
-        this->activation_count = 5;
+        this->activation_count = 20;
     }
 
     ~state_node() {

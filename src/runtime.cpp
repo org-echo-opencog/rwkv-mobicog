@@ -177,7 +177,7 @@ int runtime::load_model(std::string model_path, std::string backend_name, std::s
         return ret_model_id;
     }
 
-    model_instance->backend->state_root->activation_count = 5;
+    model_instance->backend->state_root->activation_count = 20;
     model_instance->backend->get_state(model_instance->backend->state_root->state);
     model_instance->backend->state_root->ids = std::vector<int>();
     model_instance->backend->state_root->logits = std::vector<float>(model_instance->backend->vocab_size, 0);
@@ -561,7 +561,7 @@ int runtime::chat(int model_id, std::vector<std::string> inputs, const int max_l
 
     if (tokens_to_prefill.size() > 0) {
         _prefill_progress_start(tokens_to_prefill.size());
-        std::string debug_msg = "new tokens to prefill: ";
+        std::string debug_msg = "new tokens to prefill: text = " + model->tokenizer->decode(tokens_to_prefill) + ", ids = ";
         for (auto id : tokens_to_prefill) {
             debug_msg += std::to_string(id) + " ";
         }
@@ -632,6 +632,7 @@ int runtime::chat(int model_id, std::vector<std::string> inputs, const int max_l
 
         decoded_idx = model->sampler->sample(logits, model->backend->get_num_vocab());
         if (decoded_idx == 0) {
+            LOGD("sampled token 0, stopping generation\n");
             break;
         }
 
@@ -753,7 +754,7 @@ int runtime::chat_batch(int model_id, std::vector<std::string> inputs, const int
     // prefill needed tokens
     if (tokens_to_prefill.size() > 0) {
         _prefill_progress_start(tokens_to_prefill.size());
-        std::string debug_msg = "new tokens to prefill: ";
+        std::string debug_msg = "new tokens to prefill: text = " + model->tokenizer->decode(tokens_to_prefill) + ", ids = ";
         for (auto id : tokens_to_prefill) {
             debug_msg += std::to_string(id) + " ";
         }

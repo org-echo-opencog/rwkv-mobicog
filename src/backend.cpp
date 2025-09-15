@@ -15,6 +15,17 @@ state_node* execution_provider::match_and_load_state(const std::vector<int> &ids
     while (node->children.size() > 0) {
         bool matched = false;
         for (auto &child : node->children) {
+            std::string debug_msg = "Comparing: ";
+            for (auto id : child->ids) {
+                debug_msg += std::to_string(id) + " ";
+            }
+            LOGD("%s\n", debug_msg.c_str());
+            debug_msg = "With: ";
+            for (auto id : std::vector<int>(ids.begin() + ids_compare_pos, ids.begin() + ids_compare_pos + child->ids.size())) {
+                debug_msg += std::to_string(id) + " ";
+            }
+            LOGD("%s\n", debug_msg.c_str());
+
             if (ids_compare_pos + child->ids.size() < ids.size() && std::equal(ids.begin() + ids_compare_pos, ids.begin() + ids_compare_pos + child->ids.size(), child->ids.begin())) {
                 node = child.get();
                 node->activation_count++; // Increment matched child count
@@ -47,6 +58,14 @@ state_node* execution_provider::match_and_load_state(const std::vector<int> &ids
 }
 
 int execution_provider::register_state_checkpoint(state_node* &node, const std::vector<int> &ids, const float *logits) {
+    for (auto &child : node->children) {
+        if (child->ids.size() == ids.size() && std::equal(child->ids.begin(), child->ids.end(), ids.begin())) {
+            child->activation_count++;
+            node = child.get();
+            return RWKV_SUCCESS;
+        }
+    }
+
     auto new_node = std::make_unique<state_node>();
     std::any new_state;
     if (new_node == nullptr) {
@@ -59,7 +78,14 @@ int execution_provider::register_state_checkpoint(state_node* &node, const std::
     new_node->state = std::move(new_state);
     new_node->activation_count = node->activation_count;
 
+    std::string debug_msg = "register_state_checkpoint: new node ids: ";
+    for (auto id : new_node->ids) {
+        debug_msg += std::to_string(id) + " ";
+    }
+    LOGD("%s\n", debug_msg.c_str());
+
     node->children.push_back(std::move(new_node));
+    node = node->children.back().get();
     return RWKV_SUCCESS;
 }
 
@@ -70,6 +96,12 @@ int execution_provider::register_batch_state_checkpoint(state_node* &node, std::
         return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
     }
     for (size_t i = 0; i < batch_size; i++) {
+        for (auto &child : node->children) {
+            if (child->ids.size() == ids[i].size() && std::equal(child->ids.begin(), child->ids.end(), ids[i].begin())) {
+                child->activation_count++;
+                continue;
+            }
+        }
         auto new_node = std::make_unique<state_node>();
         new_node->ids = std::vector<int>(ids[i]);
         new_node->state = std::move(states[i]);
