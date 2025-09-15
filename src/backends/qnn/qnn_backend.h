@@ -46,10 +46,6 @@ public:
 class qnn_backend : public execution_provider {
 public:
     ~qnn_backend() {
-        if (state_head) {
-            state_head->delete_after();
-            state_head = nullptr;
-        }
         release_model();
         release();
     }

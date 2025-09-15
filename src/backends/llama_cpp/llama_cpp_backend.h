@@ -9,10 +9,6 @@ namespace rwkvmobile {
 class llama_cpp_backend : public execution_provider {
 public:
     ~llama_cpp_backend() {
-        if (state_head) {
-            state_head->delete_after();
-            state_head = nullptr;
-        }
         release_model();
         release();
     }
@@ -21,9 +17,6 @@ public:
     int eval(int id, float *& logits) override;
     int eval(std::vector<int> ids, float *& logits, bool skip_logits_copy = false) override;
     int eval_with_embeddings(const float *embeddings, int n_tokens, float *& logits) override;
-    void free_logits_if_allocated(float *& logits) override {
-        return;
-    };
     bool is_available() override;
     int zero_state() override;
     int get_state(std::any &state) override;

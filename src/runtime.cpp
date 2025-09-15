@@ -171,7 +171,15 @@ int runtime::load_model(std::string model_path, std::string backend_name, std::s
     LOGI("Loaded model from: %s as model_id = %d\n", model_path.c_str(), _next_model_id);
     LOGI("Model num_layers: %d, num_heads: %d, hidden_size: %d, vocab_size: %d\n",
          model_instance->backend->n_layers, model_instance->backend->num_heads, model_instance->backend->hidden_size, model_instance->backend->vocab_size);
-    model_instance->backend->clear_state();
+    model_instance->backend->zero_state();
+    model_instance->backend->state_root = std::make_unique<state_node>();
+    if (model_instance->backend->state_root == nullptr) {
+        return ret_model_id;
+    }
+    model_instance->backend->state_root->is_constant = true;
+    model_instance->backend->get_state(model_instance->backend->state_root->state);
+    model_instance->backend->state_root->ids = std::vector<int>();
+    model_instance->backend->state_root->logits = std::vector<float>(model_instance->backend->vocab_size, 0);
 
     // 3. Load tokenizer
     if (!tokenizer_path.empty()) {
@@ -310,6 +318,16 @@ int runtime::load_initial_state(int model_id, std::string state_path) {
         LOGE("the specified state file is not a rmpack file\n");
         return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
     }
+    std::string initial_state_str = "<state src=\"" + state_path + "\">";
+    std::vector<int> initial_state_ids = model->tokenizer->encode(initial_state_str);
+
+    for (int i = 0; i < model->backend->state_root->children.size(); i++) {
+        if (model->backend->state_root->children[i]->ids == initial_state_ids) {
+            return RWKV_SUCCESS;
+        }
+    }
+
+    std::any initial_state;
     RMPack state_pack(state_path);
     int hidden_size_config = state_pack.getConfig()["hidden_size"];
     auto files = state_pack.getFiles();
@@ -331,19 +349,27 @@ int runtime::load_initial_state(int model_id, std::string state_path) {
         memcpy(states[i].data(), data, state_size);
         state_pack.freeFileMemory(files[i].filename);
     }
-    model->backend->load_raw_states(states);
 
+    model->backend->load_raw_states(states);
+    model->backend->get_state(initial_state);
+    // make a new constant state node
+    model->backend->state_root->children.push_back(std::make_unique<state_node>(initial_state, initial_state_ids, std::vector<float>(model->backend->vocab_size, 0), true));
     return RWKV_SUCCESS;
 }
 
-void runtime::clear_initial_state(int model_id) {
+void runtime::unload_initial_state(int model_id, std::string state_path) {
     if (_models.find(model_id) == _models.end()) {
         return;
     }
     auto &model = _models.at(model_id);
-    model->backend->zero_state();
-    model->backend->get_state(model->backend->state_head->state);
-    model->backend->state_head->delete_after();
+    std::string initial_state_str = "<state src=\"" + state_path + "\">";
+    std::vector<int> initial_state_ids = model->tokenizer->encode(initial_state_str);
+    for (int i = 0; i < model->backend->state_root->children.size(); i++) {
+        if (model->backend->state_root->children[i]->ids == initial_state_ids) {
+            model->backend->state_root->children.erase(model->backend->state_root->children.begin() + i);
+            break;
+        }
+    }
 }
 
 int runtime::eval_logits(int model_id, int id, float *& logits) {
@@ -574,8 +600,8 @@ int runtime::chat(int model_id, std::vector<std::string> inputs, const int max_l
     }
 
     if (logits == nullptr) {
-        if (node->last_logits.size() == model->backend->get_num_vocab()) {
-            logits = node->last_logits.data();
+        if (node->logits.size() == model->backend->get_num_vocab()) {
+            logits = node->logits.data();
         } else {
             LOGE("no logits found, neither from saved state nor from new tokens to prefill\n");
             ret = eval_logits(model_id, text_ids.back(), logits);
@@ -632,7 +658,7 @@ int runtime::chat(int model_id, std::vector<std::string> inputs, const int max_l
             break;
         }
 
-        if (i != 0 || logits != node->last_logits.data()) {
+        if (i != 0 || logits != node->logits.data()) {
             model->backend->free_logits_if_allocated(logits);
         }
         ret = eval_logits(model_id, decoded_idx, logits);
@@ -664,7 +690,7 @@ int runtime::chat(int model_id, std::vector<std::string> inputs, const int max_l
         }
     }
 
-    if (logits != node->last_logits.data()) {
+    if (logits != node->logits.data()) {
         model->backend->free_logits_if_allocated(logits);
     }
 
@@ -764,8 +790,8 @@ int runtime::chat_batch(int model_id, std::vector<std::string> inputs, const int
 
     auto num_vocab = model->backend->get_num_vocab();
     if (logits == nullptr) {
-        if (node->last_logits.size() == num_vocab) {
-            logits = node->last_logits.data();
+        if (node->logits.size() == num_vocab) {
+            logits = node->logits.data();
         } else {
             LOGE("no logits found, neither from saved state nor from new tokens to prefill\n");
             ret = eval_logits(model_id, text_ids.back(), logits);
@@ -937,7 +963,7 @@ int runtime::chat_batch(int model_id, std::vector<std::string> inputs, const int
             break;
         }
 
-        if (i != 0 || logits != node->last_logits.data()) {
+        if (i != 0 || logits != node->logits.data()) {
             model->backend->free_logits_if_allocated(logits);
         }
 
@@ -989,7 +1015,7 @@ int runtime::chat_batch(int model_id, std::vector<std::string> inputs, const int
         }
     }
 
-    if (logits != node->last_logits.data()) {
+    if (logits != node->logits.data()) {
         model->backend->free_logits_if_allocated(logits);
     }
 
@@ -1009,34 +1035,25 @@ int runtime::set_prompt(int model_id, std::string prompt) {
 
     LOGD("Setting and processing prompt for model %d: \"%s\"\n", model_id, prompt.c_str());
     std::vector<int> ids = model->tokenizer->encode(prompt);
-    if (model->backend->state_head->next == nullptr) {
-        model->backend->state_head->next = new state_node;
-        if (model->backend->state_head->next == nullptr) {
-            return RWKV_ERROR_RUNTIME | RWKV_ERROR_ALLOC;
-        }
-    }
-
-    if (model->backend->state_head->next->ids == ids) {
-        return RWKV_SUCCESS;
-    }
-    model->prompt = prompt;
-    model->backend->set_state(model->backend->state_head->state);
-    model->backend->state_head->next->ids = ids;
-
     if (ids.empty()) {
+        LOGD("Got empty prompt\n");
         return RWKV_SUCCESS;
     }
-    if (model->backend->state_head->next->state.has_value()) {
-        model->backend->free_state(model->backend->state_head->next->state);
+    std::vector<int> new_ids_to_prefill;
+    auto node = model->backend->match_and_load_state(ids, new_ids_to_prefill);
+    if (new_ids_to_prefill.empty()) {
+        return RWKV_SUCCESS;
     }
+
+    model->prompt = prompt;
+    model->backend->set_state(node->state);
+
     float *logits = nullptr;
     int ret = eval_logits(model_id, ids, logits);
     if (ret) {
         return ret;
     }
-    model->backend->get_state(model->backend->state_head->next->state);
-    model->backend->state_head->next->last_logits.resize(model->backend->get_num_vocab());
-    memcpy(model->backend->state_head->next->last_logits.data(), logits, model->backend->get_num_vocab() * sizeof(float));
+    model->backend->register_state_checkpoint(node, ids, logits);
     model->backend->free_logits_if_allocated(logits);
     return RWKV_SUCCESS;
 }
@@ -1061,26 +1078,14 @@ int runtime::set_image_prompt(int model_id, std::string path) {
     std::string prompt = "<img src=\"" + path + "\">";
     std::vector<int> ids = model->tokenizer->encode(prompt);
 
-    if (model->backend->state_head->next == nullptr) {
-        model->backend->state_head->next = new state_node;
-        if (model->backend->state_head->next == nullptr) {
-            return RWKV_ERROR_RUNTIME | RWKV_ERROR_ALLOC;
-        }
-    }
-
-    if (model->backend->state_head->next->ids == ids) {
+    std::vector<int> new_ids_to_prefill;
+    auto node = model->backend->match_and_load_state(ids, new_ids_to_prefill);
+    if (new_ids_to_prefill.empty()) {
         return RWKV_SUCCESS;
     }
+
     model->prompt = prompt;
-    model->backend->set_state(model->backend->state_head->state);
-    model->backend->state_head->next->ids = ids;
-
-    if (ids.empty()) {
-        return RWKV_SUCCESS;
-    }
-    if (model->backend->state_head->next->state.has_value()) {
-        model->backend->free_state(model->backend->state_head->next->state);
-    }
+    model->backend->set_state(node->state);
 
     auto start = std::chrono::high_resolution_clock::now();
     std::vector<float> embeddings;
@@ -1095,18 +1100,19 @@ int runtime::set_image_prompt(int model_id, std::string path) {
     start = std::chrono::high_resolution_clock::now();
     int ret = eval_logits_with_embeddings(model_id, embeddings.data(), n_tokens, logits);
     if (ret) {
+        LOGE("%s failed to eval logits with embeddings\n", __func__);
         return ret;
     }
     // "<|vision_end|>"
     ret = eval_logits(model_id, 65530, logits);
     if (ret) {
+        LOGE("%s failed to eval logits\n", __func__);
         return ret;
     }
     end = std::chrono::high_resolution_clock::now();
     LOGI("eval_logits_with_embeddings duration: %lld ms", std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count());
-    model->backend->get_state(model->backend->state_head->next->state);
-    model->backend->state_head->next->last_logits.resize(model->backend->get_num_vocab());
-    memcpy(model->backend->state_head->next->last_logits.data(), logits, model->backend->get_num_vocab() * sizeof(float));
+
+    model->backend->register_state_checkpoint(node, ids, logits);
     model->backend->free_logits_if_allocated(logits);
     return RWKV_SUCCESS;
 }
@@ -1124,26 +1130,14 @@ int runtime::set_audio_prompt(int model_id, std::string path) {
     std::string prompt = "<audio src=\"" + path + "\">";
     std::vector<int> ids = model->tokenizer->encode(prompt);
 
-    if (model->backend->state_head->next == nullptr) {
-        model->backend->state_head->next = new state_node;
-        if (model->backend->state_head->next == nullptr) {
-            return RWKV_ERROR_RUNTIME | RWKV_ERROR_ALLOC;
-        }
-    }
-
-    if (model->backend->state_head->next->ids == ids) {
+    std::vector<int> new_ids_to_prefill;
+    auto node = model->backend->match_and_load_state(ids, new_ids_to_prefill);
+    if (new_ids_to_prefill.empty()) {
         return RWKV_SUCCESS;
     }
+
     model->prompt = prompt;
-    model->backend->set_state(model->backend->state_head->state);
-    model->backend->state_head->next->ids = ids;
-
-    if (ids.empty()) {
-        return RWKV_SUCCESS;
-    }
-    if (model->backend->state_head->next->state.has_value()) {
-        model->backend->free_state(model->backend->state_head->next->state);
-    }
+    model->backend->set_state(node->state);
 
     auto start = std::chrono::high_resolution_clock::now();
     std::vector<float> embeddings;
@@ -1158,11 +1152,10 @@ int runtime::set_audio_prompt(int model_id, std::string path) {
 
     int ret = eval_logits_with_embeddings(model_id, embeddings.data(), n_tokens, logits);
     if (ret) {
+        LOGE("%s failed to eval logits with embeddings\n", __func__);
         return ret;
     }
-    model->backend->get_state(model->backend->state_head->next->state);
-    model->backend->state_head->next->last_logits.resize(model->backend->get_num_vocab());
-    memcpy(model->backend->state_head->next->last_logits.data(), logits, model->backend->get_num_vocab() * sizeof(float));
+    model->backend->register_state_checkpoint(node, ids, logits);
     model->backend->free_logits_if_allocated(logits);
     return RWKV_SUCCESS;
 }
@@ -1896,7 +1889,7 @@ int runtime::clear_state(int model_id) {
         model->sampler->clear_occurences();
     }
     if (model->backend != nullptr) {
-        model->backend->clear_state();
+        model->backend->zero_state();
     }
     return RWKV_SUCCESS;
 }

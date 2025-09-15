@@ -10,10 +10,6 @@ namespace rwkvmobile {
 class ncnn_rwkv_backend : public execution_provider {
 public:
     ~ncnn_rwkv_backend() {
-        if (state_head) {
-            state_head->delete_after();
-            state_head = nullptr;
-        }
         release_model();
         release();
     }
@@ -21,9 +17,6 @@ public:
     int load_model(std::string model_path) override;
     int eval(int id, float *& logits) override;
     int eval(std::vector<int> ids, float *& logits, bool skip_logits_copy = false) override;
-    void free_logits_if_allocated(float *& logits) override {
-        return;
-    };
     bool is_available() override;
     int get_state(std::any &state) override;
     int set_state(std::any state) override;

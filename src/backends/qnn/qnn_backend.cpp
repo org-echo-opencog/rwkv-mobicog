@@ -2537,8 +2537,6 @@ int qnn_backend::load_raw_states(std::vector<std::vector<half_float::half>> stat
         memcpy(buffer, states[i].data(), states[i].size() * sizeof(half_float::half));
     }
 
-    get_state(state_head->state);
-    state_head->delete_after();
     return RWKV_SUCCESS;
 }
 

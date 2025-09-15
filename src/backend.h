@@ -8,9 +8,37 @@
 #include "half.hpp"
 
 #include "commondef.h"
-#include "state.h"
 
 namespace rwkvmobile {
+
+class state_node {
+public:
+    std::any state;
+    std::vector<int> ids;
+    std::vector<float> logits;
+    std::vector<std::unique_ptr<state_node>> children;
+    bool is_constant = false;
+    int activation_count;
+
+    state_node() {
+        this->activation_count = 3;
+    };
+
+    state_node(const std::any state, const std::vector<int> ids, const std::vector<float> logits, bool is_constant = false) {
+        this->state = state;
+        this->ids = ids;
+        this->logits = logits;
+        this->is_constant = is_constant;
+        this->activation_count = 3;
+    }
+
+    ~state_node() {
+        if (state.has_value()) {
+            state.reset();
+        }
+        children.clear();
+    }
+};
 
 class execution_provider {
 public:
@@ -54,19 +82,7 @@ public:
 
     std::string extra_str;
 
-    std::unique_ptr<state_node> state_head;
-
-    int clear_state() {
-        if (state_head != nullptr) {
-            state_head->delete_after();
-            set_state(state_head->state);
-        } else {
-            zero_state();
-            state_head = std::make_unique<state_node>();
-            get_state(state_head->state);
-        }
-        return RWKV_SUCCESS;
-    }
+    std::unique_ptr<state_node> state_root;
 
     state_node* match_and_load_state(const std::vector<int> &ids, std::vector<int> &new_ids_to_prefill);
     int register_state_checkpoint(state_node* &node, const std::vector<int> &ids, const float *logits);

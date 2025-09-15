@@ -46,10 +46,6 @@ public:
 class web_rwkv_backend : public execution_provider {
 public:
     ~web_rwkv_backend() {
-        if (state_head) {
-            state_head->delete_after();
-            state_head = nullptr;
-        }
         release_model();
         release();
     }

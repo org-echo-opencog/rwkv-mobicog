@@ -183,8 +183,6 @@ int llama_cpp_backend::load_raw_states(std::vector<std::vector<half_float::half>
         ggml_backend_tensor_memset(r, 0, 0, r->ne[0] * sizeof(float));
     }
 
-    get_state(state_head->state);
-    state_head->delete_after();
     return RWKV_SUCCESS;
 }
 

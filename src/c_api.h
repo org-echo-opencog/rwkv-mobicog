@@ -104,7 +104,7 @@ int rwkvmobile_runtime_clear_state(rwkvmobile_runtime_t runtime, int model_id);
 
 int rwkvmobile_runtime_load_initial_state(rwkvmobile_runtime_t runtime, int model_id, const char * state_path);
 
-void rwkvmobile_runtime_clear_initial_state(rwkvmobile_runtime_t runtime, int model_id);
+void rwkvmobile_runtime_unload_initial_state(rwkvmobile_runtime_t runtime, int model_id, const char * state_path);
 
 struct sampler_params rwkvmobile_runtime_get_sampler_params(rwkvmobile_runtime_t runtime, int model_id);
 
