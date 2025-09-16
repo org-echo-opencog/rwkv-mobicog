@@ -50,11 +50,6 @@ state_node* execution_provider::match_and_load_state(const std::vector<int> &ids
     set_state(node->state);
 
     new_ids_to_prefill = std::vector<int>(ids.begin() + ids_compare_pos, ids.end());
-    std::string debug_msg = "new tokens to prefill: ";
-    for (auto id : new_ids_to_prefill) {
-        debug_msg += std::to_string(id) + " ";
-    }
-    LOGD("%s\n", debug_msg.c_str());
     return node;
 }
 

@@ -41,14 +41,14 @@ int NucleusSampler::sample(const float* logits, const size_t size, float tempera
             [&](int i, int j) { return logits[i] > logits[j]; });
 
     int len = top_k;
-    if (probs_buffer.size() != len) {
+    if (probs_buffer.size() < len) {
         probs_buffer.resize(len);
     }
 
     // softmax
     float sum = 0;
     for (int i = 0; i < len; i++) {
-        probs_buffer[i] = std::exp(logits[index_buffer[i]] / temperature);
+        probs_buffer[i] = std::exp((logits[index_buffer[i]] - logits[index_buffer[0]]) / temperature);
         sum += probs_buffer[i];
     }
 
@@ -70,7 +70,7 @@ int NucleusSampler::sample(const float* logits, const size_t size, float tempera
         random_value = cumsum * (_generator() - _generator.min()) / (_generator.max() - _generator.min());
     }
 
-    int ret = -1;
+    int ret = index_buffer[0];
     cumsum = 0;
     for (int i = 0; i < len; i++) {
         cumsum += probs_buffer[i];
