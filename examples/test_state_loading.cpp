@@ -24,7 +24,7 @@ int main(int argc, char **argv) {
 
     runtime.load_initial_state(model_id, argv[2]);
 
-    runtime.set_prompt(model_id, "System: 请你扮演名为白素贞的角色，你的设定是：你来自《新白娘子传奇》，你叫白素贞。你是一条修炼千年的蛇仙，为了报答救命之恩，你化为人形来到人间，与许仙相识相爱。然而，因误会而分离的故事情节使得两人的感情曲折离奇，最终有情人终成眷属。\n\n");
+    runtime.set_prompt(model_id, "<state src=\"" + std::string(argv[2]) + "\">" + "System: 请你扮演名为白素贞的角色，你的设定是：你来自《新白娘子传奇》，你叫白素贞。你是一条修炼千年的蛇仙，为了报答救命之恩，你化为人形来到人间，与许仙相识相爱。然而，因误会而分离的故事情节使得两人的感情曲折离奇，最终有情人终成眷属。\n\n");
 
     std::vector<std::string> input_list = {
         "娘子我来了！",
