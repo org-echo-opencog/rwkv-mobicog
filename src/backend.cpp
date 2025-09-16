@@ -16,7 +16,7 @@ state_node* execution_provider::match_and_load_state(const std::vector<int> &ids
         bool matched = false;
         for (auto &child : node->children) {
             if (ids_compare_pos + child->ids.size() < ids.size()) {
-                LOGD("ids_compare_pos = %s", ids_compare_pos);
+                LOGD("ids_compare_pos = %d", ids_compare_pos);
                 std::string debug_msg = "child->ids = ";
                 for (auto id : child->ids) {
                     debug_msg += std::to_string(id) + " ";
@@ -46,7 +46,6 @@ state_node* execution_provider::match_and_load_state(const std::vector<int> &ids
         }
         LOGI("%s\n", debug_msg.c_str());
     }
-
 
     set_state(node->state);
 
