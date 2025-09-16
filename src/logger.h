@@ -48,7 +48,7 @@ public:
     }
 
 private:
-    int _level = RWKV_LOG_LEVEL_DEBUG;
+    int _level = RWKV_LOG_LEVEL_INFO;
 
     // ring buffer
     std::vector<std::string> _buffer;
