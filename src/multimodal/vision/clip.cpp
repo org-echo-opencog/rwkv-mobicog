@@ -168,6 +168,7 @@ static std::string format(const char * fmt, ...) {
 
 #define TN_RWKV_ADAPTER_PROJ "rwkv_adapter.proj.%d.%s"
 #define TN_RWKV_ADAPTER_NORM "rwkv_adapter.pre_norm.%s"
+#define TN_RWKV_ADAPTER_POSTNORM "rwkv_adapter.post_norm.%s"
 
 enum projector_type {
     PROJECTOR_TYPE_MLP,
@@ -506,6 +507,9 @@ struct clip_vision_model {
 
     struct ggml_tensor * mm_1_w = NULL; // Yi type models have 0, 1, 3, 4
     struct ggml_tensor * mm_1_b = NULL;
+
+    struct ggml_tensor * mm_3_w = NULL;
+    struct ggml_tensor * mm_3_b = NULL;
 };
 
 struct clip_ctx {
@@ -718,6 +722,12 @@ static ggml_cgraph * clip_image_build_graph(clip_ctx * ctx, const clip_image_f32
         struct ggml_tensor * emb_norm = ggml_norm(ctx0, embeddings, 1e-5);
         emb_norm = ggml_add(ctx0, ggml_mul(ctx0, emb_norm, model.mm_1_w), model.mm_1_b);
         embeddings = ggml_add(ctx0, embeddings, emb_norm);
+
+        if (model.mm_3_w && model.mm_3_b) {
+            embeddings = ggml_norm(ctx0, embeddings, 1e-5);
+            embeddings = ggml_mul(ctx0, embeddings, model.mm_3_w);
+            embeddings = ggml_add(ctx0, embeddings, model.mm_3_b);
+        }
     }
 
     // build the graph
@@ -1175,6 +1185,14 @@ struct clip_ctx * clip_model_load(const char * fname, const char * fname_adapter
             vision_model.mm_2_b              = get_tensor(new_clip->ctx_data, format(TN_RWKV_ADAPTER_PROJ, 2, "bias"));
         } catch(const std::exception& /*e*/) {
             LOG_ERR("%s: failed to load vision model tensors\n", __func__);
+        }
+
+        try {
+            vision_model.mm_3_w              = get_tensor(new_clip->ctx_data, format(TN_RWKV_ADAPTER_POSTNORM, "weight"));
+            vision_model.mm_3_b              = get_tensor(new_clip->ctx_data, format(TN_RWKV_ADAPTER_POSTNORM, "bias"));
+        } catch(const std::exception& /*e*/) { // optional tensors
+            vision_model.mm_3_w = NULL;
+            vision_model.mm_3_b = NULL;
         }
 
         vision_model.layers.resize(hparams.n_layer);
