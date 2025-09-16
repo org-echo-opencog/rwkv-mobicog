@@ -615,10 +615,13 @@ int runtime::chat(int model_id, std::vector<std::string> inputs, const int max_l
     for (int i = 0; i < max_length; i++) {
         model->sampler->apply_penalties(logits, model->backend->get_num_vocab());
 
-        if (is_pseudo_thinking && i == 0) {
-            // token 61 is '<', 261 is '\n\n'
-            logits[61] = -1e9f;
-            logits[261] = -1e9f;
+        if (i == 0) {
+            if (is_pseudo_thinking) {
+                // token 61 is '<', 261 is '\n\n'
+                logits[61] = -1e9f;
+                logits[261] = -1e9f;
+            }
+            logits[0] = -1e9f;
         } else if (is_pseudo_thinking && i == 1 && decoded_idx == 11) {
             logits[61] = -1e9f;
         }
