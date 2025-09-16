@@ -58,7 +58,6 @@ int rwkvmobile_runtime_eval_logits(rwkvmobile_runtime_t handle, int model_id, co
         return ret;
     }
     memcpy(logits, logits_ret, logits_len * sizeof(float));
-    rt->free_logits_if_allocated(model_id, logits_ret);
     return RWKV_SUCCESS;
 }
 
@@ -100,8 +99,8 @@ int rwkvmobile_runtime_eval_chat_with_history_async(
 int rwkvmobile_runtime_eval_chat_batch_with_history_async(
     rwkvmobile_runtime_t handle,
     int model_id,
-    const char ** inputs,
-    const int num_inputs,
+    const char *** inputs,
+    const int * num_inputs,
     const int batch_size,
     const int max_tokens,
     void (*callback_batch)(const int, const char **, const int*, const char **),
@@ -113,9 +112,12 @@ int rwkvmobile_runtime_eval_chat_batch_with_history_async(
     auto rt = static_cast<class runtime *>(handle);
     rt->set_is_generating(model_id, true);
     rt->set_stop_signal(model_id, false);
-    std::vector<std::string> inputs_vec;
-    for (int i = 0; i < num_inputs; i++) {
-        inputs_vec.push_back(std::string(inputs[i]));
+    std::vector<std::vector<std::string>> inputs_vec(batch_size);
+    for (int i = 0; i < batch_size; i++) {
+        inputs_vec[i].resize(num_inputs[i]);
+        for (int j = 0; j < num_inputs[i]; j++) {
+            inputs_vec[i][j] = std::string(inputs[i][j]);
+        }
     }
 
     std::thread generation_thread([=]() {

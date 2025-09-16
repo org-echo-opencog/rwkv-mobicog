@@ -404,9 +404,6 @@ int runtime::eval_logits(int model_id, std::vector<int> ids, float *& logits) {
     for (; i + _prefill_chunk_size <= ids.size(); i += _prefill_chunk_size) {
         auto ids_chunk = std::vector<int>(ids.begin() + i, ids.begin() + i + _prefill_chunk_size);
         ret = model->backend->eval(ids_chunk, logits);
-        if (i + _prefill_chunk_size < ids.size() - 1) {
-            model->backend->free_logits_if_allocated(logits);
-        }
         if (ret != RWKV_SUCCESS) return ret;
         if (_current_prefill_total_tokens > 0) {
             _current_prefill_finished_tokens += _prefill_chunk_size;
@@ -417,9 +414,6 @@ int runtime::eval_logits(int model_id, std::vector<int> ids, float *& logits) {
     if (i < ids.size()) {
         auto ids_left = std::vector<int>(ids.begin() + i, ids.end());
         ret = model->backend->eval(ids_left, logits);
-        if (i != ids.size() - 1) {
-            model->backend->free_logits_if_allocated(logits);
-        }
         if (_current_prefill_total_tokens > 0) {
             _current_prefill_finished_tokens += ids_left.size();
             _prefill_progress = (double)_current_prefill_finished_tokens / _current_prefill_total_tokens;
@@ -583,7 +577,6 @@ int runtime::chat(int model_id, std::vector<std::string> inputs, const int max_l
                 LOGE("failed to register state checkpoint\n");
                 return ret;
             }
-            model->backend->free_logits_if_allocated(logits);
         }
     }
     _prefill_progress_finish();
@@ -661,9 +654,6 @@ int runtime::chat(int model_id, std::vector<std::string> inputs, const int max_l
             break;
         }
 
-        if (i != 0 || logits != node->logits.data()) {
-            model->backend->free_logits_if_allocated(logits);
-        }
         ret = eval_logits(model_id, decoded_idx, logits);
         if (ret) {
             model->is_generating = false;
@@ -693,10 +683,6 @@ int runtime::chat(int model_id, std::vector<std::string> inputs, const int max_l
         }
     }
 
-    if (logits != node->logits.data()) {
-        model->backend->free_logits_if_allocated(logits);
-    }
-
     model->is_generating = false;
     model->stop_signal = false;
 
@@ -705,7 +691,7 @@ int runtime::chat(int model_id, std::vector<std::string> inputs, const int max_l
     return RWKV_SUCCESS;
 }
 
-int runtime::chat_batch(int model_id, std::vector<std::string> inputs, const int max_length, const int batch_size, void (*callback_batch)(const int, const char **, const int*, const char **), bool enable_reasoning) {
+int runtime::chat_batch(int model_id, std::vector<std::vector<std::string>> inputs, const int max_length, const int batch_size, void (*callback_batch)(const int, const char **, const int*, const char **), bool enable_reasoning) {
     if (_models.find(model_id) == _models.end()) {
         return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
     }
@@ -726,113 +712,114 @@ int runtime::chat_batch(int model_id, std::vector<std::string> inputs, const int
         return RWKV_ERROR_RUNTIME | RWKV_ERROR_UNSUPPORTED;
     }
 
+    if (inputs.size() != batch_size) {
+        LOGE("chat_batch: inputs size %d is not equal to batch size %d\n", inputs.size(), batch_size);
+        return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
+    }
+
     model->is_generating = true;
     model->stop_signal = false;
-
-    auto input_text = apply_chat_template(model_id, inputs, enable_reasoning);
-    LOGD("Applied chat template: \"%s\"\n", input_text.c_str());
-    std::vector<int> text_ids = model->tokenizer->encode(input_text);
-    std::string debug_msg = "text_ids: ";
-    for (auto id : text_ids) {
-        debug_msg += std::to_string(id) + " ";
-    }
-    LOGD("%s\n", debug_msg.c_str());
 
     model->response_buffer_batch.resize(batch_size);
     model->response_buffer_ids_batch.resize(batch_size);
     model->response_buffer_eos_found_batch.resize(batch_size);
-    for (int i = 0; i < batch_size; i++) {
-        model->response_buffer_batch[i] = input_text.substr(input_text.rfind(model->response_role + ":") + (model->response_role + ":").size());;
-        model->response_buffer_ids_batch[i].clear();
-        model->response_buffer_eos_found_batch[i] = false;
-    }
-
-    float *logits = nullptr;
-    std::vector<int> tokens_to_prefill;
-    auto node = model->backend->match_and_load_state(text_ids, tokens_to_prefill);
-
-    // prefill needed tokens
-    if (tokens_to_prefill.size() > 0) {
-        _prefill_progress_start(tokens_to_prefill.size());
-        std::string debug_msg = "new tokens to prefill: text = " + model->tokenizer->decode(tokens_to_prefill) + ", ids = ";
-        for (auto id : tokens_to_prefill) {
-            debug_msg += std::to_string(id) + " ";
-        }
-        LOGD("%s\n", debug_msg.c_str());
-
-        // save a state checkpoint every about 256 tokens
-        int checkpoint_interval = 256;
-        for (int i = 0; i < tokens_to_prefill.size(); i += checkpoint_interval) {
-            std::vector<int> tokens_to_prefill_chunk = std::vector<int>(tokens_to_prefill.begin() + i, tokens_to_prefill.begin() + std::min(i + checkpoint_interval, (int)tokens_to_prefill.size()));
-            int ret = eval_logits(model_id, tokens_to_prefill_chunk, logits);
-            if (ret) {
-                model->is_generating = false;
-                LOGE("failed to eval logits\n");
-                return ret;
-            }
-            ret = model->backend->register_state_checkpoint(node, tokens_to_prefill_chunk, logits);
-            if (ret) {
-                model->is_generating = false;
-                LOGE("failed to register state checkpoint\n");
-                return ret;
-            }
-            model->backend->free_logits_if_allocated(logits);
-        }
-    }
-    _prefill_progress_finish();
 
     std::vector<std::vector<int>> response_ids_raw_batch(batch_size);
-    int ret;
+
+    std::vector<std::string> input_texts(batch_size);
+    std::vector<std::vector<int>> text_ids_batch(batch_size);
+    // std::vector<float*> logits_batch(batch_size, nullptr);
+    float *logits = nullptr;
+    std::vector<state_node*> nodes_batch(batch_size);
 
     std::vector<std::map<int, float>> occurences_batch(batch_size);
-    for (size_t i = 1; i < inputs.size(); i += 2) {
-        std::vector<int> ids = model->tokenizer->encode(" " + inputs[i]);
-        for (auto id: ids) {
-            for (int j = 0; j < batch_size; j++) {
-                occurences_batch[j][id]++;
-            }
-        }
-    }
-
-    auto num_vocab = model->backend->get_num_vocab();
-    if (logits == nullptr) {
-        if (node->logits.size() == num_vocab) {
-            logits = node->logits.data();
-        } else {
-            LOGE("no logits found, neither from saved state nor from new tokens to prefill\n");
-            ret = eval_logits(model_id, text_ids.back(), logits);
-            if (ret) {
-                model->is_generating = false;
-                LOGE("failed to eval logits\n");
-                return ret;
-            }
-        }
-    }
-
-    bool is_pseudo_thinking = enable_reasoning && model->response_buffer_batch[0].find("</think>") != std::string::npos;
-
     std::vector<int> decoded_idx(batch_size);
-    model->sampler->apply_penalties(logits, num_vocab);
-
-    logits[61] = -1e9f;
-    logits[261] = -1e9f;
-
-    auto idx = model->sampler->sample(logits, num_vocab);
-    for (int i = 0; i < batch_size; i++) {
-        decoded_idx[i] = idx;
-    }
-
-    std::any state_start;
-    model->backend->get_state(state_start);
-    for (int i = 0; i < batch_size; i++) {
-        model->backend->set_state_on_batch_slot(i, state_start);
-    }
-    model->backend->free_state(state_start);
-
-    std::vector<std::any> state_to_save(batch_size);
-
+    std::vector<bool> is_pseudo_thinking_batch(batch_size, false);
+    std::vector<std::any> state_batch(batch_size);
     std::vector<bool> thinking_end_tag_found_batch(batch_size, false);
 
+    int ret;
+    auto num_vocab = model->backend->get_num_vocab();
+
+    // prefill for each batch
+    for (int batch_idx = 0; batch_idx < batch_size; batch_idx++) {
+        auto &input = inputs[batch_idx];
+        input_texts[batch_idx] = apply_chat_template(model_id, input, enable_reasoning);
+        LOGD("Applied chat template for batch %d: \"%s\"\n", batch_idx, input_texts[batch_idx].c_str());
+        text_ids_batch[batch_idx] = model->tokenizer->encode(input_texts[batch_idx]);
+
+        model->response_buffer_batch[batch_idx] = input_texts[batch_idx].substr(input_texts[batch_idx].rfind(model->response_role + ":") + (model->response_role + ":").size());;
+        model->response_buffer_ids_batch[batch_idx].clear();
+        model->response_buffer_eos_found_batch[batch_idx] = false;
+        std::vector<int> tokens_to_prefill;
+        nodes_batch[batch_idx] = model->backend->match_and_load_state(text_ids_batch[batch_idx], tokens_to_prefill);
+
+        // prefill needed tokens
+        if (tokens_to_prefill.size() > 0) {
+            _prefill_progress_start(tokens_to_prefill.size());
+            std::string debug_msg = "new tokens to prefill: text = " + model->tokenizer->decode(tokens_to_prefill) + ", ids = ";
+            for (auto id : tokens_to_prefill) {
+                debug_msg += std::to_string(id) + " ";
+            }
+            LOGD("%s\n", debug_msg.c_str());
+
+            // save a state checkpoint every about 256 tokens
+            int checkpoint_interval = 256;
+            for (int j = 0; j < tokens_to_prefill.size(); j += checkpoint_interval) {
+                std::vector<int> tokens_to_prefill_chunk = std::vector<int>(tokens_to_prefill.begin() + j, tokens_to_prefill.begin() + std::min(j + checkpoint_interval, (int)tokens_to_prefill.size()));
+                int ret = eval_logits(model_id, tokens_to_prefill_chunk, logits);
+                if (ret) {
+                    model->is_generating = false;
+                    LOGE("failed to eval logits\n");
+                    return ret;
+                }
+                ret = model->backend->register_state_checkpoint(nodes_batch[batch_idx], tokens_to_prefill_chunk, logits);
+                if (ret) {
+                    model->is_generating = false;
+                    LOGE("failed to register state checkpoint\n");
+                    return ret;
+                }
+            }
+        }
+        _prefill_progress_finish();
+
+        for (size_t j = 1; j < inputs[batch_idx].size(); j += 2) {
+            std::vector<int> ids = model->tokenizer->encode(" " + inputs[batch_idx][j]);
+            for (auto id: ids) {
+                occurences_batch[batch_idx][id]++;
+            }
+        }
+
+        if (logits == nullptr) {
+            if (nodes_batch[batch_idx]->logits.size() == num_vocab) {
+                logits = nodes_batch[batch_idx]->logits.data();
+            } else {
+                LOGE("no logits found, neither from saved state nor from new tokens to prefill\n");
+                ret = eval_logits(model_id, text_ids_batch[batch_idx].back(), logits);
+                if (ret) {
+                    model->is_generating = false;
+                    LOGE("failed to eval logits\n");
+                    return ret;
+                }
+            }
+        }
+
+        is_pseudo_thinking_batch[batch_idx] = enable_reasoning && model->response_buffer_batch[batch_idx].find("</think>") != std::string::npos;
+        model->sampler->apply_penalties(logits, num_vocab);
+
+        logits[61] = -1e9f;
+        logits[261] = -1e9f;
+
+        decoded_idx[batch_idx] = model->sampler->sample(logits, num_vocab);
+
+        model->backend->get_state(state_batch[batch_idx]);
+    }
+
+    for (int batch_idx = 0; batch_idx < batch_size; batch_idx++) {
+        model->backend->set_state_on_batch_slot(batch_idx, state_batch[batch_idx]);
+    }
+
+    // dynamic batch size
     int current_batch_size = batch_size;
     std::vector<int> active_batch_indices;
     std::vector<int> original_to_active_mapping(batch_size, -1);
@@ -850,7 +837,7 @@ int runtime::chat_batch(int model_id, std::vector<std::string> inputs, const int
                     model->sampler->get_token_banned(), model->sampler->get_presence_penalty(),
                     model->sampler->get_frequency_penalty(), model->sampler->get_penalty_decay());
 
-                if (is_pseudo_thinking && i == 1 && decoded_idx[j] == 11) {
+                if (is_pseudo_thinking_batch[original_j] && i == 1 && decoded_idx[j] == 11) {
                     logits[j * num_vocab + 61] = -1e9f;
                 }
             }
@@ -864,7 +851,7 @@ int runtime::chat_batch(int model_id, std::vector<std::string> inputs, const int
                 model->response_buffer_eos_found_batch[original_j] = true;
                 std::any state_end;
                 model->backend->get_state_on_batch_slot(j, state_end);
-                state_to_save[original_j] = std::move(state_end);
+                state_batch[original_j] = std::move(state_end);
             }
 
             if (!model->response_buffer_eos_found_batch[original_j]) {
@@ -880,7 +867,7 @@ int runtime::chat_batch(int model_id, std::vector<std::string> inputs, const int
                         model->response_buffer_eos_found_batch[original_j] = true;
                         std::any state_end;
                         model->backend->get_state_on_batch_slot(j, state_end);
-                        state_to_save[original_j] = std::move(state_end);
+                        state_batch[original_j] = std::move(state_end);
                         break;
                     }
                 }
@@ -969,10 +956,6 @@ int runtime::chat_batch(int model_id, std::vector<std::string> inputs, const int
             break;
         }
 
-        if (i != 0 || logits != node->logits.data()) {
-            model->backend->free_logits_if_allocated(logits);
-        }
-
         std::vector<int> active_decoded_idx(decoded_idx.begin(), decoded_idx.begin() + current_batch_size);
         ret = eval_logits_batch_decode(model_id, active_decoded_idx, logits);
         if (ret) {
@@ -1004,25 +987,21 @@ int runtime::chat_batch(int model_id, std::vector<std::string> inputs, const int
 
     // save state for not finished batches
     for (int j = 0; j < batch_size; j++) {
-        if (!model->response_buffer_eos_found_batch[j] && !state_to_save[j].has_value()) {
+        if (!model->response_buffer_eos_found_batch[j] && !state_batch[j].has_value()) {
             int active_slot = original_to_active_mapping[j];
             if (active_slot >= 0) {
-                model->backend->get_state_on_batch_slot(active_slot, state_to_save[j]);
+                model->backend->get_state_on_batch_slot(active_slot, state_batch[j]);
             }
         }
     }
 
     if (response_ids_raw_batch[0].size() > 0) {
-        int ret = model->backend->register_batch_state_checkpoint(node, state_to_save, response_ids_raw_batch, logits);
+        int ret = model->backend->register_batch_state_checkpoint(nodes_batch, state_batch, response_ids_raw_batch, logits);
         if (ret) {
             model->is_generating = false;
             LOGE("failed to register batch state checkpoint\n");
             return ret;
         }
-    }
-
-    if (logits != node->logits.data()) {
-        model->backend->free_logits_if_allocated(logits);
     }
 
     model->is_generating = false;
@@ -1063,7 +1042,6 @@ int runtime::set_prompt(int model_id, std::string prompt) {
         return ret;
     }
     model->backend->register_state_checkpoint(node, ids, logits);
-    model->backend->free_logits_if_allocated(logits);
     return RWKV_SUCCESS;
 }
 
@@ -1122,7 +1100,6 @@ int runtime::set_image_prompt(int model_id, std::string path) {
     LOGI("eval_logits_with_embeddings duration: %lld ms", std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count());
 
     model->backend->register_state_checkpoint(node, ids, logits);
-    model->backend->free_logits_if_allocated(logits);
     return RWKV_SUCCESS;
 }
 #endif
@@ -1165,7 +1142,6 @@ int runtime::set_audio_prompt(int model_id, std::string path) {
         return ret;
     }
     model->backend->register_state_checkpoint(node, ids, logits);
-    model->backend->free_logits_if_allocated(logits);
     return RWKV_SUCCESS;
 }
 #endif
@@ -1189,7 +1165,6 @@ int generate_tts_output(
 
     for (int i = 0; i < tts_max_length; i++) {
         int idx = sampler->sample(logits, tts_tag_token_offset, tts_temperature, tts_top_k, tts_top_p);
-        backend->free_logits_if_allocated(logits);
         if (idx == tts_eos_token) {
             break;
         }
@@ -1385,7 +1360,6 @@ int runtime::run_spark_tts_with_properties(int model_id, std::string tts_text, s
 
     for (int i = 0; i < 32; i++) { // generate 32 global_tokens
         int idx = model->sampler->sample(logits, 4096, 1.0, 20, 0.95);
-        model->backend->free_logits_if_allocated(logits);
 
         global_tokens.push_back(idx + global_token_offset);
         ret = eval_logits(model_id, idx + global_token_offset, logits);
@@ -1572,7 +1546,6 @@ int runtime::run_spark_tts_zeroshot_streaming(int model_id, std::string tts_text
 
             for (int i = 0; i < tts_max_length; i++) {
                 int idx = model->sampler->sample(logits, tts_tag_token_offset, tts_temperature, tts_top_k, tts_top_p);
-                model->backend->free_logits_if_allocated(logits);
                 if (idx == tts_eos_token) {
                     LOGI("[TTS] EOS token found");
                     break;
@@ -1686,7 +1659,6 @@ int runtime::run_spark_tts_with_properties_streaming(int model_id, std::string t
 
                 for (int i = 0; i < 32; i++) { // generate 32 global_tokens
                     int idx = model->sampler->sample(logits, 4096, 1.0, 20, 0.95);
-                    model->backend->free_logits_if_allocated(logits);
 
                     global_tokens.push_back(idx + global_token_offset);
                     ret = eval_logits(model_id, idx + global_token_offset, logits);
@@ -1728,7 +1700,6 @@ int runtime::run_spark_tts_with_properties_streaming(int model_id, std::string t
 
             for (int i = 0; i < tts_max_length; i++) {
                 int idx = model->sampler->sample(logits, tts_tag_token_offset, tts_temperature, tts_top_k, tts_top_p);
-                model->backend->free_logits_if_allocated(logits);
                 if (idx == tts_eos_token) {
                     LOGI("[TTS] EOS token found");
                     break;
@@ -1843,7 +1814,6 @@ int runtime::run_spark_tts_with_global_tokens_streaming(int model_id, std::strin
 
             for (int i = 0; i < tts_max_length; i++) {
                 int idx = model->sampler->sample(logits, tts_tag_token_offset, tts_temperature, tts_top_k, tts_top_p);
-                model->backend->free_logits_if_allocated(logits);
                 if (idx == tts_eos_token) {
                     LOGI("[TTS] EOS token found");
                     break;
@@ -1938,7 +1908,6 @@ int runtime::gen_completion(int model_id, std::string prompt, int max_length, in
         model->sampler->apply_penalties(logits, model->backend->get_num_vocab());
         idx = model->sampler->sample(logits, model->backend->get_num_vocab());
 
-        model->backend->free_logits_if_allocated(logits);
         model->response_buffer_eos_found = (idx == stop_code);
 
         std::string next = model->tokenizer->decode(idx);
@@ -2210,17 +2179,6 @@ int runtime::release() {
     }
 #endif
     return RWKV_SUCCESS;
-}
-
-void runtime::free_logits_if_allocated(int model_id, float *& logits) {
-    if (_models.find(model_id) == _models.end()) {
-        return;
-    }
-    auto &model = _models.at(model_id);
-    if (model->backend == nullptr) {
-        return;
-    }
-    model->backend->free_logits_if_allocated(logits);
 }
 
 int runtime::get_vocab_size(int model_id) {

@@ -49,7 +49,6 @@ public:
     virtual int eval(std::vector<int> ids, float *& logits, bool skip_logits_copy = false) { return 0; };
     virtual int eval_batch(std::vector<std::vector<int>> ids, float *& logits) { return RWKV_ERROR_UNSUPPORTED; };
     virtual int eval_with_embeddings(const float *embeddings, int n_tokens, float *& logits) { return RWKV_ERROR_UNSUPPORTED; };
-    virtual void free_logits_if_allocated(float *& logits) { return; };
     virtual int get_state(std::any &state) { return 0; }
     virtual int set_state(std::any state) { return 0; }
     virtual int free_state(std::any state) { return 0; }
@@ -86,7 +85,7 @@ public:
 
     state_node* match_and_load_state(const std::vector<int> &ids, std::vector<int> &new_ids_to_prefill);
     int register_state_checkpoint(state_node* &node, const std::vector<int> &ids, const float *logits);
-    int register_batch_state_checkpoint(state_node* &node, std::vector<std::any> &states, const std::vector<std::vector<int>> &ids, const float *logits);
+    int register_batch_state_checkpoint(std::vector<state_node*> &nodes, std::vector<std::any> &states, const std::vector<std::vector<int>> &ids, const float *logits);
 
     void cleanup_state_tree();
 };

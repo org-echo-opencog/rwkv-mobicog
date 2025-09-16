@@ -36,7 +36,6 @@ int main(int argc, char **argv) {
             runtime.eval_logits(model_id, ids[0], logits);
         else
             runtime.eval_logits_batch_decode(model_id, ids, logits);
-        runtime.free_logits_if_allocated(model_id, logits);
     }
     std::cout << "Decode speed " << "(bsz = " << batch_size << "): " << runtime.get_avg_decode_speed(model_id) << " tokens/s" << std::endl;
 

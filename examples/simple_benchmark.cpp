@@ -29,13 +29,11 @@ int main(int argc, char **argv) {
     }
     float *logits = nullptr;
     runtime.eval_logits(model_id, prompt_ids, logits);
-    runtime.free_logits_if_allocated(model_id, logits);
 
     std::cout << "Prefill speed: " << runtime.get_avg_prefill_speed(model_id) << " tokens/s" << std::endl;
 
     for (int i = 0; i < 128; i++) {
         runtime.eval_logits(model_id, rand() % vocab_size, logits);
-        runtime.free_logits_if_allocated(model_id, logits);
     }
     std::cout << "Decode speed: " << runtime.get_avg_decode_speed(model_id) << " tokens/s" << std::endl;
 

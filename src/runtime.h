@@ -102,12 +102,10 @@ public:
     int eval_logits(int model_id, std::vector<int> ids, float *& logits);
     int eval_logits_with_embeddings(int model_id, const float *embeddings, int n_tokens, float *& logits);
     int eval_logits_batch_decode(int model_id, std::vector<int> ids, float *& logits);
-    void free_logits_if_allocated(int model_id, float *& logits);
 
     // with history
     int chat(int model_id, std::vector<std::string> inputs, const int max_length, void (*callback)(const char *, const int, const char *) = nullptr, bool enable_reasoning = false);
-    int chat_batch(int model_id, std::vector<std::string> inputs, const int max_length, const int batch_size, void (*callback_batch)(const int, const char **, const int*, const char **) = nullptr, bool enable_reasoning = false);
-    int chat_batch_multiple_history(int model_id, std::vector<std::vector<std::string>> inputs, const int max_length, const int batch_size, void (*callback_batch)(const int, const char **, const int*, const char **) = nullptr, bool enable_reasoning = false);
+    int chat_batch(int model_id, std::vector<std::vector<std::string>> inputs, const int max_length, const int batch_size, void (*callback_batch)(const int, const char **, const int*, const char **) = nullptr, bool enable_reasoning = false);
     int gen_completion(int model_id, std::string prompt, int max_length, int stop_code, void (*callback)(const char *, const int, const char *));
 
     std::vector<int> get_supported_batch_sizes(int model_id);

@@ -208,8 +208,8 @@ late final _rwkvmobile_runtime_gen_completion_async = _rwkvmobile_runtime_gen_co
 
 int rwkvmobile_runtime_eval_chat_batch_with_history_async(rwkvmobile_runtime_t handle,
 int model_id,
-ffi.Pointer<ffi.Pointer<ffi.Char>> inputs,
-int num_inputs,
+ffi.Pointer<ffi.Pointer<ffi.Pointer<ffi.Char>>> inputs,
+ffi.Pointer<ffi.Int> num_inputs,
 int batch_size,
 int max_tokens,
 ffi.Pointer<ffi.NativeFunction<ffi.Void Function(ffi.Int , ffi.Pointer<ffi.Pointer<ffi.Char>> , ffi.Pointer<ffi.Int> , ffi.Pointer<ffi.Pointer<ffi.Char>> )>> callback_batch,
@@ -227,8 +227,8 @@ enable_reasoning,
 }
 
 late final _rwkvmobile_runtime_eval_chat_batch_with_history_asyncPtr = _lookup<
-    ffi.NativeFunction<ffi.Int Function(rwkvmobile_runtime_t , ffi.Int , ffi.Pointer<ffi.Pointer<ffi.Char>> , ffi.Int , ffi.Int , ffi.Int , ffi.Pointer<ffi.NativeFunction<ffi.Void Function(ffi.Int , ffi.Pointer<ffi.Pointer<ffi.Char>> , ffi.Pointer<ffi.Int> , ffi.Pointer<ffi.Pointer<ffi.Char>> )>> , ffi.Int )>>('rwkvmobile_runtime_eval_chat_batch_with_history_async');
-late final _rwkvmobile_runtime_eval_chat_batch_with_history_async = _rwkvmobile_runtime_eval_chat_batch_with_history_asyncPtr.asFunction<int Function(rwkvmobile_runtime_t , int , ffi.Pointer<ffi.Pointer<ffi.Char>> , int , int , int , ffi.Pointer<ffi.NativeFunction<ffi.Void Function(ffi.Int , ffi.Pointer<ffi.Pointer<ffi.Char>> , ffi.Pointer<ffi.Int> , ffi.Pointer<ffi.Pointer<ffi.Char>> )>> , int )>();
+    ffi.NativeFunction<ffi.Int Function(rwkvmobile_runtime_t , ffi.Int , ffi.Pointer<ffi.Pointer<ffi.Pointer<ffi.Char>>> , ffi.Pointer<ffi.Int> , ffi.Int , ffi.Int , ffi.Pointer<ffi.NativeFunction<ffi.Void Function(ffi.Int , ffi.Pointer<ffi.Pointer<ffi.Char>> , ffi.Pointer<ffi.Int> , ffi.Pointer<ffi.Pointer<ffi.Char>> )>> , ffi.Int )>>('rwkvmobile_runtime_eval_chat_batch_with_history_async');
+late final _rwkvmobile_runtime_eval_chat_batch_with_history_async = _rwkvmobile_runtime_eval_chat_batch_with_history_asyncPtr.asFunction<int Function(rwkvmobile_runtime_t , int , ffi.Pointer<ffi.Pointer<ffi.Pointer<ffi.Char>>> , ffi.Pointer<ffi.Int> , int , int , ffi.Pointer<ffi.NativeFunction<ffi.Void Function(ffi.Int , ffi.Pointer<ffi.Pointer<ffi.Char>> , ffi.Pointer<ffi.Int> , ffi.Pointer<ffi.Pointer<ffi.Char>> )>> , int )>();
 
 supported_batch_sizes rwkvmobile_runtime_get_supported_batch_sizes(rwkvmobile_runtime_t runtime,
 int model_id,
@@ -298,17 +298,19 @@ late final _rwkvmobile_runtime_load_initial_statePtr = _lookup<
     ffi.NativeFunction<ffi.Int Function(rwkvmobile_runtime_t , ffi.Int , ffi.Pointer<ffi.Char> )>>('rwkvmobile_runtime_load_initial_state');
 late final _rwkvmobile_runtime_load_initial_state = _rwkvmobile_runtime_load_initial_statePtr.asFunction<int Function(rwkvmobile_runtime_t , int , ffi.Pointer<ffi.Char> )>();
 
-void rwkvmobile_runtime_clear_initial_state(rwkvmobile_runtime_t runtime,
+void rwkvmobile_runtime_unload_initial_state(rwkvmobile_runtime_t runtime,
 int model_id,
+ffi.Pointer<ffi.Char> state_path,
 ) {
-  return _rwkvmobile_runtime_clear_initial_state(runtime,
+  return _rwkvmobile_runtime_unload_initial_state(runtime,
 model_id,
+state_path,
 );
 }
 
-late final _rwkvmobile_runtime_clear_initial_statePtr = _lookup<
-    ffi.NativeFunction<ffi.Void Function(rwkvmobile_runtime_t , ffi.Int )>>('rwkvmobile_runtime_clear_initial_state');
-late final _rwkvmobile_runtime_clear_initial_state = _rwkvmobile_runtime_clear_initial_statePtr.asFunction<void Function(rwkvmobile_runtime_t , int )>();
+late final _rwkvmobile_runtime_unload_initial_statePtr = _lookup<
+    ffi.NativeFunction<ffi.Void Function(rwkvmobile_runtime_t , ffi.Int , ffi.Pointer<ffi.Char> )>>('rwkvmobile_runtime_unload_initial_state');
+late final _rwkvmobile_runtime_unload_initial_state = _rwkvmobile_runtime_unload_initial_statePtr.asFunction<void Function(rwkvmobile_runtime_t , int , ffi.Pointer<ffi.Char> )>();
 
 sampler_params rwkvmobile_runtime_get_sampler_params(rwkvmobile_runtime_t runtime,
 int model_id,
