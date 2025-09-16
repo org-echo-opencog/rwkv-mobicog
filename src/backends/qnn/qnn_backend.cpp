@@ -2517,7 +2517,7 @@ int qnn_backend::zero_state_on_batch_slot(int slot) {
                 QNN_TENSOR_GET_QUANT_PARAMS(qnntensor).scaleOffsetEncoding.offset,
                 QNN_TENSOR_GET_QUANT_PARAMS(qnntensor).scaleOffsetEncoding.scale,
                 1);
-            for (int j = 0; j < element_count; j++) {
+            for (int j = 0; j < element_count / max_supported_bsz; j++) {
                 ((uint16_t*)(buffer + offset))[j] = qtzero;
             }
         }
