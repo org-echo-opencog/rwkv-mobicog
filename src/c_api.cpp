@@ -190,6 +190,43 @@ int rwkvmobile_runtime_gen_completion_async(
     return RWKV_SUCCESS;
 }
 
+int rwkvmobile_runtime_gen_completion_batch_async(
+    rwkvmobile_runtime_t handle,
+    int model_id,
+    const char ** prompts,
+    const int batch_size,
+    const int max_tokens,
+    const int stop_code,
+    void (*callback_batch)(const int, const char **, const int*, const char **)) {
+    if (handle == nullptr || prompts == nullptr || batch_size <= 0 || max_tokens <= 0) {
+        return RWKV_ERROR_INVALID_PARAMETERS;
+    }
+
+    auto rt = static_cast<class runtime *>(handle);
+    rt->clear_response_buffer(model_id);
+    rt->set_is_generating(model_id, true);
+    rt->set_stop_signal(model_id, false);
+
+    std::thread generation_thread([=]() {
+        std::vector<std::string> prompts_vec(batch_size);
+        for (int i = 0; i < batch_size; i++) {
+            prompts_vec[i] = std::string(prompts[i]);
+        }
+        int ret = rt->gen_completion_batch(
+            model_id,
+            prompts_vec,
+            batch_size,
+            max_tokens,
+            stop_code,
+            callback_batch);
+        return ret;
+    });
+
+    generation_thread.detach();
+
+    return RWKV_SUCCESS;
+}
+
 int rwkvmobile_runtime_gen_completion(
     rwkvmobile_runtime_t handle,
     int model_id,

@@ -15,6 +15,19 @@ state_node* execution_provider::match_and_load_state(const std::vector<int> &ids
     while (node->children.size() > 0) {
         bool matched = false;
         for (auto &child : node->children) {
+            if (ids_compare_pos + child->ids.size() < ids.size()) {
+                LOGD("ids_compare_pos = %s", ids_compare_pos);
+                std::string debug_msg = "child->ids = ";
+                for (auto id : child->ids) {
+                    debug_msg += std::to_string(id) + " ";
+                }
+                LOGD("%s\n", debug_msg.c_str());
+                debug_msg = "ids = ";
+                for (int i = ids_compare_pos; i < ids_compare_pos + child->ids.size(); i++) {
+                    debug_msg += std::to_string(ids[i]) + " ";
+                }
+                LOGD("%s\n", debug_msg.c_str());
+            }
             if (ids_compare_pos + child->ids.size() < ids.size() && std::equal(ids.begin() + ids_compare_pos, ids.begin() + ids_compare_pos + child->ids.size(), child->ids.begin())) {
                 node = child.get();
                 node->activation_count++; // Increment matched child count

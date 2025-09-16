@@ -1869,18 +1869,137 @@ int runtime::clear_state(int model_id) {
     }
     if (model->backend != nullptr) {
         model->backend->zero_state();
+        int max_supported_batch_size = *std::max_element(model->backend->supported_batch_sizes.begin(), model->backend->supported_batch_sizes.end());
+        if (max_supported_batch_size > 1) {
+            for (int i = 0; i < max_supported_batch_size; i++) {
+                model->backend->zero_state_on_batch_slot(i);
+            }
+        }
     }
+    return RWKV_SUCCESS;
+}
+
+int runtime::gen_completion_batch(int model_id, std::vector<std::string> prompts, int max_length, int batch_size, int stop_code, void (*callback_batch)(const int, const char **, const int*, const char **)) {
+    if (_models.find(model_id) == _models.end()) {
+        LOGE("gen_completion_batch: Model ID %d not found", model_id);
+        return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
+    }
+    auto &model = _models.at(model_id);
+    if (model->backend == nullptr || model->tokenizer == nullptr) {
+        LOGE("gen_completion_batch: Backend or tokenizer for model ID %d not found", model_id);
+        return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
+    }
+
+    bool supported = false;
+    for (auto size : model->backend->supported_batch_sizes) {
+        if (batch_size == size) {
+            supported = true;
+            break;
+        }
+    }
+    if (!supported) {
+        LOGE("chat_batch: batch size %d is not supported\n", batch_size);
+        return RWKV_ERROR_RUNTIME | RWKV_ERROR_UNSUPPORTED;
+    }
+
+    if (prompts.size() != batch_size) {
+        LOGE("chat_batch: prompts size %d is not equal to batch size %d\n", prompts.size(), batch_size);
+        return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
+    }
+
+    model->is_generating = true;
+    model->stop_signal = false;
+
+    model->response_buffer_batch.resize(batch_size);
+    model->response_buffer_ids_batch.resize(batch_size);
+    model->response_buffer_eos_found_batch.resize(batch_size);
+
+    std::vector<int> decoded_idx_batch(batch_size);
+    std::vector<std::string> decoded_text_batch(batch_size);
+    std::vector<std::any> state_batch(batch_size);
+    float *logits = nullptr;
+
+    std::vector<std::map<int, float>> occurences_batch(batch_size);
+    for (int batch_idx = 0; batch_idx < batch_size; batch_idx++) {
+        model->backend->get_state_on_batch_slot(batch_idx, state_batch[batch_idx]);
+    }
+
+    for (int batch_idx = 0; batch_idx < batch_size; batch_idx++) {
+        std::vector<int> ids = model->tokenizer->encode(prompts[batch_idx]);
+        _prefill_progress_start(ids.size());
+        model->backend->set_state(state_batch[batch_idx]);
+
+        int ret = eval_logits(model_id, ids, logits);
+        if (ret || !logits) {
+            LOGE("gen_completion_batch: Error evaluating logits");
+            model->is_generating = false;
+            return ret;
+        }
+        _prefill_progress_finish();
+
+        model->backend->get_state(state_batch[batch_idx]);
+
+        model->response_buffer_batch[batch_idx] = prompts[batch_idx];
+        model->response_buffer_ids_batch[batch_idx] = ids;
+
+        model->sampler->apply_penalties(logits, model->backend->get_num_vocab(), occurences_batch[batch_idx],
+            model->sampler->get_token_banned(), model->sampler->get_presence_penalty(),
+            model->sampler->get_frequency_penalty(), model->sampler->get_penalty_decay());
+        decoded_idx_batch[batch_idx] = model->sampler->sample(logits, model->backend->get_num_vocab());
+    }
+
+    for (int batch_idx = 0; batch_idx < batch_size; batch_idx++) {
+        model->backend->set_state_on_batch_slot(batch_idx, state_batch[batch_idx]);
+    }
+
+    for (int i = 0; i < max_length; i++) {
+        if (i != 0) {
+            for (int batch_idx = 0; batch_idx < batch_size; batch_idx++) {
+                model->sampler->apply_penalties(logits + batch_idx * model->backend->get_num_vocab(), model->backend->get_num_vocab(), occurences_batch[batch_idx],
+                    model->sampler->get_token_banned(), model->sampler->get_presence_penalty(),
+                    model->sampler->get_frequency_penalty(), model->sampler->get_penalty_decay());
+            }
+            decoded_idx_batch = model->sampler->sample_batch(logits, model->backend->get_num_vocab(), model->backend->get_num_vocab(), batch_size);
+        }
+
+        for (int batch_idx = 0; batch_idx < batch_size; batch_idx++) {
+            model->response_buffer_eos_found_batch[batch_idx] = (decoded_idx_batch[batch_idx] == stop_code);
+            decoded_text_batch[batch_idx] = model->tokenizer->decode(decoded_idx_batch[batch_idx]);
+            if (!model->response_buffer_eos_found_batch[batch_idx]) {
+                model->response_buffer_batch[batch_idx] += decoded_text_batch[batch_idx];
+                model->response_buffer_ids_batch[batch_idx].push_back(decoded_idx_batch[batch_idx]);
+            }
+        }
+
+        int ret = eval_logits_batch_decode(model_id, decoded_idx_batch, logits);
+        if (ret) {
+            model->is_generating = false;
+            LOGE("failed to eval logits\n");
+            return ret;
+        }
+
+        if (std::all_of(model->response_buffer_eos_found_batch.begin(), model->response_buffer_eos_found_batch.end(), [](bool eos_found) { return eos_found; }) || model->stop_signal) {
+            break;
+        }
+
+        for (int batch_idx = 0; batch_idx < batch_size; batch_idx++) {
+            occurences_batch[batch_idx][decoded_idx_batch[batch_idx]]++;
+        }
+    }
+
+    model->is_generating = false;
+    model->stop_signal = false;
     return RWKV_SUCCESS;
 }
 
 int runtime::gen_completion(int model_id, std::string prompt, int max_length, int stop_code, void (*callback)(const char *, const int, const char *)) {
     if (_models.find(model_id) == _models.end()) {
-        LOGE("[GEN_COMPLETION] Model ID %d not found", model_id);
+        LOGE("gen_completion: Model ID %d not found", model_id);
         return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
     }
     auto &model = _models.at(model_id);
     if (model->backend == nullptr || model->tokenizer == nullptr) {
-        LOGE("[GEN_COMPLETION] Backend or tokenizer for model ID %d not found", model_id);
+        LOGE("gen_completion: Backend or tokenizer for model ID %d not found", model_id);
         return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
     }
     model->response_buffer = "";
@@ -1895,7 +2014,7 @@ int runtime::gen_completion(int model_id, std::string prompt, int max_length, in
     float *logits = nullptr;
     int ret = eval_logits(model_id, ids, logits);
     if (ret || !logits) {
-        LOGE("[GEN_COMPLETION] Error evaluating logits");
+        LOGE("gen_completion: Error evaluating logits");
         model->is_generating = false;
         return ret;
     }
@@ -2152,6 +2271,11 @@ void runtime::clear_response_buffer(int model_id) {
     model->response_buffer.clear();
     model->response_buffer_ids.clear();
     model->response_buffer_eos_found = false;
+    for (int i = 0; i < model->response_buffer_batch.size(); i++) {
+        model->response_buffer_batch[i].clear();
+        model->response_buffer_ids_batch[i].clear();
+        model->response_buffer_eos_found_batch[i] = false;
+    }
 }
 
 void runtime::backend_set_extra_str(int model_id, std::string str) {
