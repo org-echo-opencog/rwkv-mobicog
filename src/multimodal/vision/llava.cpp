@@ -244,7 +244,7 @@ static clip_image_f32 * reshape_by_patch(clip_image_f32 * image, int patch_size)
     return patch;
 }
 
-static bool encode_image_with_clip(clip_ctx * ctx_clip, int n_threads, const clip_image_u8 * img, float * image_embd, int * n_img_pos) {
+static bool encode_image_with_clip(clip_ctx * ctx_clip, int n_threads, const clip_image_u8 * img, float * image_embd, int * n_img_pos, bool force_no_postnorm) {
     // std::vector<clip_image_f32*> img_res_v; // format VectN x H x W x RGB (N x 336 x 336 x 3), so interleaved RGB - different to the python implementation which is N x 3 x 336 x 336
     clip_image_f32_batch img_res_v;
     img_res_v.size = 0;
@@ -262,7 +262,7 @@ static bool encode_image_with_clip(clip_ctx * ctx_clip, int n_threads, const cli
     {
         // flat / default llava-1.5 type embedding
         *n_img_pos = clip_n_patches(ctx_clip);
-        bool encoded = clip_image_encode(ctx_clip, n_threads, &img_res_v.data[0], image_embd); // image_embd shape is 576 x 4096
+        bool encoded = clip_image_encode(ctx_clip, n_threads, &img_res_v.data[0], image_embd, force_no_postnorm); // image_embd shape is 576 x 4096
         delete[] img_res_v.data;
         if (!encoded) {
             LOG_ERR("Unable to encode image\n");
@@ -291,7 +291,7 @@ bool llava_validate_embed_size(const llama_context * ctx_llama, const clip_ctx *
     return true;
 }
 
-bool llava_image_embed_make_with_clip_img(clip_ctx * ctx_clip, int n_threads, const clip_image_u8 * img, float ** image_embd_out, int * n_img_pos_out) {
+bool llava_image_embed_make_with_clip_img(clip_ctx * ctx_clip, int n_threads, const clip_image_u8 * img, float ** image_embd_out, int * n_img_pos_out, bool force_no_postnorm) {
     int num_max_patches = 16;
     float * image_embd;
     auto size = clip_embd_nbytes(ctx_clip)*num_max_patches;
@@ -302,7 +302,7 @@ bool llava_image_embed_make_with_clip_img(clip_ctx * ctx_clip, int n_threads, co
     }
 
     int n_img_pos;
-    if (!encode_image_with_clip(ctx_clip, n_threads, img, image_embd, &n_img_pos)) {
+    if (!encode_image_with_clip(ctx_clip, n_threads, img, image_embd, &n_img_pos, force_no_postnorm)) {
         LOG_ERR("%s: cannot encode image, aborting\n", __func__);
         free(image_embd);
         return false;
@@ -365,7 +365,7 @@ bool llava_eval_image_embed(llama_context * ctx_llama, const struct llava_image_
     return true;
 }
 
-struct llava_image_embed * llava_image_embed_make_with_bytes(struct clip_ctx * ctx_clip, int n_threads, const unsigned char * image_bytes, int image_bytes_length) {
+struct llava_image_embed * llava_image_embed_make_with_bytes(struct clip_ctx * ctx_clip, int n_threads, const unsigned char * image_bytes, int image_bytes_length, bool force_no_postnorm) {
     clip_image_u8 * img = clip_image_u8_init();
     if (!clip_image_load_from_bytes(image_bytes, image_bytes_length, img)) {
         clip_image_u8_free(img);
@@ -375,7 +375,7 @@ struct llava_image_embed * llava_image_embed_make_with_bytes(struct clip_ctx * c
 
     float* image_embed = NULL;
     int n_image_pos = 0;
-    bool image_embed_result = llava_image_embed_make_with_clip_img(ctx_clip, n_threads, img, &image_embed, &n_image_pos);
+    bool image_embed_result = llava_image_embed_make_with_clip_img(ctx_clip, n_threads, img, &image_embed, &n_image_pos, force_no_postnorm);
     if (!image_embed_result) {
         clip_image_u8_free(img);
         LOG_ERR("%s: couldn't embed the image\n", __func__);
@@ -428,7 +428,7 @@ static bool load_file_to_bytes(const char* path, unsigned char** bytesOut, long 
     return true;
 }
 
-struct llava_image_embed * llava_image_embed_make_with_filename(struct clip_ctx * ctx_clip, int n_threads, const char * image_path) {
+struct llava_image_embed * llava_image_embed_make_with_filename(struct clip_ctx * ctx_clip, int n_threads, const char * image_path, bool force_no_postnorm) {
     unsigned char* image_bytes;
     long image_bytes_length;
     auto loaded = load_file_to_bytes(image_path, &image_bytes, &image_bytes_length);
@@ -437,7 +437,7 @@ struct llava_image_embed * llava_image_embed_make_with_filename(struct clip_ctx 
         return NULL;
     }
 
-    llava_image_embed *embed = llava_image_embed_make_with_bytes(ctx_clip, n_threads, image_bytes, image_bytes_length);
+    llava_image_embed *embed = llava_image_embed_make_with_bytes(ctx_clip, n_threads, image_bytes, image_bytes_length, force_no_postnorm);
     free(image_bytes);
 
     return embed;

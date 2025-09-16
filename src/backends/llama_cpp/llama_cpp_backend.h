@@ -25,6 +25,8 @@ public:
     int release_model() override;
     int release() override;
     int load_raw_states(std::vector<std::vector<half_float::half>> states) override;
+
+    bool embedding_input_force_no_ln0() override { return true; }
 private:
     llama_model * model;
     llama_context * ctx;

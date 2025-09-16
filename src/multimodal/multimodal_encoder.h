@@ -10,7 +10,7 @@ class MultimodalEncoder {
 public:
     virtual ~MultimodalEncoder() = default;
     virtual int LoadModel(const std::string &model_path, const std::string &adapter_path) = 0;
-    virtual bool Encode(const std::string &path, std::vector<float> &embeddings, int &n_tokens) = 0;
+    virtual bool Encode(const std::string &path, std::vector<float> &embeddings, int &n_tokens, bool force_no_postnorm = false) = 0;
 };
 
 } // namespace rwkvmobile

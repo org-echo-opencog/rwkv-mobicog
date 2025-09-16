@@ -19,8 +19,8 @@ int VisionEncoder::LoadModel(const std::string &model_path, const std::string &a
     return RWKV_SUCCESS;
 }
 
-bool VisionEncoder::Encode(const std::string &path, std::vector<float> &embeddings, int &n_tokens) {
-    auto embd = llava_image_embed_make_with_filename(vision_encoder_ptr.get(), 4, path.c_str());
+bool VisionEncoder::Encode(const std::string &path, std::vector<float> &embeddings, int &n_tokens, bool force_no_postnorm) {
+    auto embd = llava_image_embed_make_with_filename(vision_encoder_ptr.get(), 4, path.c_str(), force_no_postnorm);
     if (embd == nullptr) {
         return false;
     }

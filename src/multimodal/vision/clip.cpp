@@ -722,6 +722,7 @@ static ggml_cgraph * clip_image_build_graph(clip_ctx * ctx, const clip_image_f32
         struct ggml_tensor * emb_norm = ggml_norm(ctx0, embeddings, 1e-5);
         emb_norm = ggml_add(ctx0, ggml_mul(ctx0, emb_norm, model.mm_1_w), model.mm_1_b);
         embeddings = ggml_add(ctx0, embeddings, emb_norm);
+        ggml_set_name(embeddings, "rwkv_adapter_embedding");
 
         if (model.mm_3_w && model.mm_3_b) {
             embeddings = ggml_norm(ctx0, embeddings, 1e-5);
@@ -2037,7 +2038,7 @@ static std::vector<std::vector<float>> get_2d_sincos_pos_embed(int embed_dim, co
     return pos_embed_2d;
 }
 
-bool clip_image_encode(struct clip_ctx * ctx, const int n_threads, clip_image_f32 * img, float * vec) {
+bool clip_image_encode(struct clip_ctx * ctx, const int n_threads, clip_image_f32 * img, float * vec, bool force_no_postnorm) {
     if (!ctx->has_vision_encoder) {
         LOG_ERR("This gguf file seems to have no vision encoder\n");
         return false;
@@ -2046,10 +2047,10 @@ bool clip_image_encode(struct clip_ctx * ctx, const int n_threads, clip_image_f3
     clip_image_f32_batch imgs{};
     imgs.size = 1;
     imgs.data = img;
-    return clip_image_batch_encode(ctx, n_threads, &imgs, vec);
+    return clip_image_batch_encode(ctx, n_threads, &imgs, vec, force_no_postnorm);
 }
 
-bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_image_f32_batch * imgs, float * vec) {
+bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_image_f32_batch * imgs, float * vec, bool force_no_postnorm) {
     if (!ctx->has_vision_encoder) {
         LOG_ERR("This gguf file seems to have no vision encoder\n");
         return false;
@@ -2129,7 +2130,7 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
     ggml_backend_graph_compute(ctx->backend, gf);
 
     // the last node is the embedding tensor
-    struct ggml_tensor * embeddings = ggml_graph_node(gf, -1);
+    struct ggml_tensor * embeddings = force_no_postnorm ? ggml_graph_get_tensor(gf, "rwkv_adapter_embedding") : ggml_graph_node(gf, -1);
 
     // copy the embeddings to the location passed by the user
     ggml_backend_tensor_get(embeddings, vec, 0, ggml_nbytes(embeddings));

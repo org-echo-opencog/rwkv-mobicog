@@ -20,7 +20,7 @@ int WhisperEncoder::LoadModel(const std::string &model_path, const std::string &
     return RWKV_SUCCESS;
 }
 
-bool WhisperEncoder::Encode(const std::string &path, std::vector<float> &embeddings, int &n_tokens) {
+bool WhisperEncoder::Encode(const std::string &path, std::vector<float> &embeddings, int &n_tokens, bool force_no_postnorm) {
     wav_file wav;
     if (!wav.load(path)) {
         LOGE("Failed to load wav file from %s", path.c_str());

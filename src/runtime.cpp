@@ -1080,7 +1080,7 @@ int runtime::set_image_prompt(int model_id, std::string path) {
     auto start = std::chrono::high_resolution_clock::now();
     std::vector<float> embeddings;
     int n_tokens;
-    if (!model->multimodal_encoder->Encode(path, embeddings, n_tokens)) {
+    if (!model->multimodal_encoder->Encode(path, embeddings, n_tokens, model->backend->embedding_input_force_no_ln0())) {
         return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
     }
     auto end = std::chrono::high_resolution_clock::now();
@@ -1131,7 +1131,7 @@ int runtime::set_audio_prompt(int model_id, std::string path) {
     auto start = std::chrono::high_resolution_clock::now();
     std::vector<float> embeddings;
     int n_tokens;
-    if (!model->multimodal_encoder->Encode(path, embeddings, n_tokens)) {
+    if (!model->multimodal_encoder->Encode(path, embeddings, n_tokens, model->backend->embedding_input_force_no_ln0())) {
         return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
     }
     auto end = std::chrono::high_resolution_clock::now();

@@ -82,8 +82,8 @@ CLIP_API bool clip_image_preprocess(struct clip_ctx * ctx, const struct clip_ima
 
 CLIP_API struct ggml_tensor * clip_get_newline_tensor(const struct clip_ctx * ctx);
 
-CLIP_API bool clip_image_encode      (struct clip_ctx * ctx, int n_threads, struct clip_image_f32 * img, float * vec);
-CLIP_API bool clip_image_batch_encode(struct clip_ctx * ctx, int n_threads, const struct clip_image_f32_batch * imgs, float * vec);
+CLIP_API bool clip_image_encode      (struct clip_ctx * ctx, int n_threads, struct clip_image_f32 * img, float * vec, bool force_no_postnorm = false);
+CLIP_API bool clip_image_batch_encode(struct clip_ctx * ctx, int n_threads, const struct clip_image_f32_batch * imgs, float * vec, bool force_no_postnorm = false);
 
 CLIP_API bool clip_model_quantize(const char * fname_inp, const char * fname_out, int itype);
 

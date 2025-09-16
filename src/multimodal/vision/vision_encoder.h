@@ -14,7 +14,7 @@ public:
     ~VisionEncoder() override;
 
     int LoadModel(const std::string &model_path, const std::string &adapter_path) override;
-    bool Encode(const std::string &path, std::vector<float> &embeddings, int &n_tokens) override;
+    bool Encode(const std::string &path, std::vector<float> &embeddings, int &n_tokens, bool force_no_postnorm = false) override;
 
 private:
     std::unique_ptr<clip_ctx, std::function<void(clip_ctx*)>> vision_encoder_ptr;

@@ -71,6 +71,8 @@ public:
     int get_num_vocab() { return vocab_size; }
     int get_version() { return version; }
 
+    virtual bool embedding_input_force_no_ln0() { return false; }
+
     int n_layers;
     int num_heads;
     int hidden_size;
