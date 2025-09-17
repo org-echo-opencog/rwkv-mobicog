@@ -243,6 +243,11 @@ int runtime::release_vision_encoder(int model_id) {
 }
 #endif
 
+int runtime::set_image_unique_identifier(std::string unique_identifier) {
+    _image_unique_identifier = unique_identifier;
+    return RWKV_SUCCESS;
+}
+
 #ifdef ENABLE_WHISPER
 int runtime::load_whisper_encoder(int model_id, std::string model_path) {
     if (_models.find(model_id) == _models.end()) {
@@ -496,16 +501,12 @@ std::string runtime::apply_chat_template(int model_id, std::vector<std::string> 
             user_text = replace_text(user_text, "\r\n", "\n");
             user_text = replace_text(user_text, "\n\n", "\n");
 
-            if (!model->user_role.empty()) {
-                text += model->bos_token + model->user_role + ": " + inputs[i] + model->eos_token;
-            } else {
-                text += inputs[i] + model->eos_token;
-            }
+            text += model->bos_token + model->user_role + ": " + inputs[i] + model->eos_token;
         } else {
             if (i == inputs.size() - 1) {
-                text += model->response_role + ": " + inputs[i];
+                text += model->bos_token + model->response_role + ": " + inputs[i];
             } else {
-                text += model->response_role + ": " + inputs[i] + model->eos_token;
+                text += model->bos_token + model->response_role + ": " + inputs[i] + model->eos_token;
             }
         }
     }
@@ -517,6 +518,67 @@ std::string runtime::apply_chat_template(int model_id, std::vector<std::string> 
         }
     }
     return text;
+}
+
+std::vector<runtime::TokenChunk> runtime::split_text_by_image_and_token_num(const std::string text, int max_tokens_per_chunk, int model_id) {
+    std::vector<TokenChunk> chunks;
+    std::string remaining_text = text;
+
+    while (!remaining_text.empty()) {
+        // Look for <image_unique_identifier>image_path</image_unique_identifier> pattern
+        std::string image_unique_identifier_start = "<" + _image_unique_identifier + ">";
+        std::string image_unique_identifier_end = "</" + _image_unique_identifier + ">";
+        size_t image_start = remaining_text.find(image_unique_identifier_start);
+        if (image_start != std::string::npos) {
+            size_t image_end = remaining_text.find(image_unique_identifier_end, image_start);
+            if (image_end != std::string::npos) {
+                // Add text before image tag as a regular chunk if not empty
+                if (image_start > 0) {
+                    std::string before_image = remaining_text.substr(0, image_start);
+                    if (!before_image.empty()) {
+                        auto tokens = _models.at(model_id)->tokenizer->encode(before_image);
+                        chunks.push_back({tokens, false, ""});
+                    }
+                }
+
+                // Extract image path and encode the full image tag as tokens
+                size_t path_start = image_start + image_unique_identifier_start.length();
+                std::string image_path = remaining_text.substr(path_start, image_end - path_start);
+                std::string full_image_tag = remaining_text.substr(image_start, image_end + image_unique_identifier_end.length() - image_start); // include both tags
+                auto image_tokens = _models.at(model_id)->tokenizer->encode(full_image_tag);
+                chunks.push_back({image_tokens, true, image_path});
+
+                // Update remaining text
+                remaining_text = remaining_text.substr(image_end + image_unique_identifier_end.length());
+                continue;
+            }
+        }
+
+        // No more image tags found, process remaining text
+        if (!remaining_text.empty()) {
+            auto tokens = _models.at(model_id)->tokenizer->encode(remaining_text);
+            chunks.push_back({tokens, false, ""});
+            break;
+        }
+    }
+
+    // Now split regular token chunks by max_tokens_per_chunk
+    std::vector<TokenChunk> final_chunks;
+    for (const auto& chunk : chunks) {
+        if (chunk.is_image) {
+            final_chunks.push_back(chunk);
+        } else {
+            // Split token chunk by max_tokens_per_chunk
+            const std::vector<int>& tokens_to_split = chunk.tokens;
+            for (size_t i = 0; i < tokens_to_split.size(); i += max_tokens_per_chunk) {
+                size_t end = std::min(i + max_tokens_per_chunk, tokens_to_split.size());
+                std::vector<int> token_chunk(tokens_to_split.begin() + i, tokens_to_split.begin() + end);
+                final_chunks.push_back({token_chunk, false, ""});
+            }
+        }
+    }
+
+    return final_chunks;
 }
 
 int runtime::chat(int model_id, std::vector<std::string> inputs, const int max_length, void (*callback)(const char *, const int, const char *), bool enable_reasoning) {
@@ -555,27 +617,80 @@ int runtime::chat(int model_id, std::vector<std::string> inputs, const int max_l
 
     if (tokens_to_prefill.size() > 0) {
         _prefill_progress_start(tokens_to_prefill.size());
-        std::string debug_msg = "new tokens to prefill: text = " + model->tokenizer->decode(tokens_to_prefill) + ", ids = ";
+        auto text_to_prefill = model->tokenizer->decode(tokens_to_prefill);
+        std::string debug_msg = "new tokens to prefill: text = " + text_to_prefill + ", ids = ";
         for (auto id : tokens_to_prefill) {
             debug_msg += std::to_string(id) + " ";
         }
         LOGD("%s\n", debug_msg.c_str());
 
-        // save a state checkpoint every about 256 tokens
+        // Split text by image tags and token count, then process each chunk
         int checkpoint_interval = 256;
-        for (int i = 0; i < tokens_to_prefill.size(); i += checkpoint_interval) {
-            std::vector<int> tokens_to_prefill_chunk = std::vector<int>(tokens_to_prefill.begin() + i, tokens_to_prefill.begin() + std::min(i + checkpoint_interval, (int)tokens_to_prefill.size()));
-            int ret = eval_logits(model_id, tokens_to_prefill_chunk, logits);
-            if (ret) {
-                model->is_generating = false;
-                LOGE("failed to eval logits\n");
-                return ret;
-            }
-            ret = model->backend->register_state_checkpoint(node, tokens_to_prefill_chunk, logits);
-            if (ret) {
-                model->is_generating = false;
-                LOGE("failed to register state checkpoint\n");
-                return ret;
+        auto token_chunks = split_text_by_image_and_token_num(text_to_prefill, checkpoint_interval, model_id);
+
+        for (const auto& chunk : token_chunks) {
+            if (chunk.is_image) {
+                // Handle image chunk - encode the image tag for state matching
+                LOGD("Processing image chunk: %s\n", chunk.image_path.c_str());
+                if (!chunk.tokens.empty()) {
+                    int ret;
+#ifdef ENABLE_VISION
+                    // "<|vision_start|>" = 65530
+                    // "<|vision_end|>" = 65531
+                    ret = eval_logits(model_id, 65530, logits);
+                    if (ret) {
+                        model->is_generating = false;
+                        LOGE("failed to eval logits for image chunk\n");
+                        return ret;
+                    }
+                    auto start = std::chrono::high_resolution_clock::now();
+                    std::vector<float> embeddings;
+                    int n_tokens;
+                    if (!model->multimodal_encoder->Encode(chunk.image_path, embeddings, n_tokens, model->backend->embedding_input_force_no_ln0())) {
+                        model->is_generating = false;
+                        LOGE("failed to encode image for image chunk\n");
+                        return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
+                    }
+                    auto end = std::chrono::high_resolution_clock::now();
+                    LOGI("siglip duration: %lld ms", std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count());
+                    ret = eval_logits_with_embeddings(model_id, embeddings.data(), n_tokens, logits);
+                    if (ret) {
+                        model->is_generating = false;
+                        LOGE("failed to eval logits with embeddings for image chunk\n");
+                        return ret;
+                    }
+                    ret = eval_logits(model_id, 65531, logits);
+                    if (ret) {
+                        model->is_generating = false;
+                        LOGE("failed to eval logits for image chunk\n");
+                        return ret;
+                    }
+#endif
+                    ret = model->backend->register_state_checkpoint(node, chunk.tokens, logits);
+                    if (ret) {
+                        model->is_generating = false;
+                        LOGE("failed to register state checkpoint for image chunk\n");
+                        return ret;
+                    }
+                }
+                // TODO: Add your image processing logic here
+            } else {
+                if (chunk.tokens.empty()) {
+                    continue;
+                }
+
+                int ret = eval_logits(model_id, chunk.tokens, logits);
+                if (ret) {
+                    model->is_generating = false;
+                    LOGE("failed to eval logits\n");
+                    return ret;
+                }
+                ret = model->backend->register_state_checkpoint(node, chunk.tokens, logits);
+                if (ret) {
+                    model->is_generating = false;
+                    LOGE("failed to register state checkpoint\n");
+                    return ret;
+                }
             }
         }
     }
@@ -1055,57 +1170,6 @@ std::string runtime::get_prompt(int model_id) {
     auto &model = _models.at(model_id);
     return model->prompt;
 }
-
-#ifdef ENABLE_VISION
-int runtime::set_image_prompt(int model_id, std::string path) {
-    if (_models.find(model_id) == _models.end()) {
-        return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
-    }
-    auto &model = _models.at(model_id);
-    if (model->backend == nullptr || model->tokenizer == nullptr || model->multimodal_encoder == nullptr) {
-        return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
-    }
-    std::string prompt = "<img src=\"" + path + "\">";
-    std::vector<int> ids = model->tokenizer->encode(prompt);
-
-    std::vector<int> new_ids_to_prefill;
-    auto node = model->backend->match_and_load_state(ids, new_ids_to_prefill);
-    if (new_ids_to_prefill.empty()) {
-        return RWKV_SUCCESS;
-    }
-
-    model->prompt = prompt;
-    model->backend->set_state(node->state);
-
-    auto start = std::chrono::high_resolution_clock::now();
-    std::vector<float> embeddings;
-    int n_tokens;
-    if (!model->multimodal_encoder->Encode(path, embeddings, n_tokens, model->backend->embedding_input_force_no_ln0())) {
-        return RWKV_ERROR_RUNTIME | RWKV_ERROR_INVALID_PARAMETERS;
-    }
-    auto end = std::chrono::high_resolution_clock::now();
-    LOGI("siglip duration: %lld ms", std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count());
-    float *logits = nullptr;
-
-    start = std::chrono::high_resolution_clock::now();
-    int ret = eval_logits_with_embeddings(model_id, embeddings.data(), n_tokens, logits);
-    if (ret) {
-        LOGE("%s failed to eval logits with embeddings\n", __func__);
-        return ret;
-    }
-    // "<|vision_end|>"
-    ret = eval_logits(model_id, 65530, logits);
-    if (ret) {
-        LOGE("%s failed to eval logits\n", __func__);
-        return ret;
-    }
-    end = std::chrono::high_resolution_clock::now();
-    LOGI("eval_logits_with_embeddings duration: %lld ms", std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count());
-
-    model->backend->register_state_checkpoint(node, ids, logits);
-    return RWKV_SUCCESS;
-}
-#endif
 
 #ifdef ENABLE_WHISPER
 int runtime::set_audio_prompt(int model_id, std::string path) {

@@ -129,8 +129,11 @@ public:
 #ifdef ENABLE_VISION
     int load_vision_encoder(int model_id, std::string model_path, std::string adapter_path = "");
     int release_vision_encoder(int model_id);
-    int set_image_prompt(int model_id, std::string path);
 #endif
+
+    int set_image_unique_identifier(std::string unique_identifier);
+
+    std::string _image_unique_identifier;
 
 #ifdef ENABLE_WHISPER
     int load_whisper_encoder(int model_id, std::string model_path);
@@ -215,6 +218,13 @@ public:
     std::string get_eos_token(int model_id);
 
     std::string apply_chat_template(int model_id, std::vector<std::string> inputs, bool enable_reasoning = false);
+
+    struct TokenChunk {
+        std::vector<int> tokens;
+        bool is_image;
+        std::string image_path; // only valid when is_image is true
+    };
+    std::vector<TokenChunk> split_text_by_image_and_token_num(const std::string text, int max_tokens_per_chunk, int model_id);
 
     int get_vocab_size(int model_id);
 

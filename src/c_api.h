@@ -131,7 +131,7 @@ int rwkvmobile_runtime_load_vision_encoder_and_adapter(rwkvmobile_runtime_t runt
 
 int rwkvmobile_runtime_release_vision_encoder(rwkvmobile_runtime_t runtime, int model_id);
 
-int rwkvmobile_runtime_set_image_prompt(rwkvmobile_runtime_t runtime, int model_id, const char * image_path);
+int rwkvmobile_runtime_set_image_unique_identifier(rwkvmobile_runtime_t runtime, const char * unique_identifier);
 
 // Whisper
 int rwkvmobile_runtime_load_whisper_encoder(rwkvmobile_runtime_t runtime, int model_id, const char * encoder_path);

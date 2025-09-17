@@ -474,19 +474,17 @@ late final _rwkvmobile_runtime_release_vision_encoderPtr = _lookup<
     ffi.NativeFunction<ffi.Int Function(rwkvmobile_runtime_t , ffi.Int )>>('rwkvmobile_runtime_release_vision_encoder');
 late final _rwkvmobile_runtime_release_vision_encoder = _rwkvmobile_runtime_release_vision_encoderPtr.asFunction<int Function(rwkvmobile_runtime_t , int )>();
 
-int rwkvmobile_runtime_set_image_prompt(rwkvmobile_runtime_t runtime,
-int model_id,
-ffi.Pointer<ffi.Char> image_path,
+int rwkvmobile_runtime_set_image_unique_identifier(rwkvmobile_runtime_t runtime,
+ffi.Pointer<ffi.Char> unique_identifier,
 ) {
-  return _rwkvmobile_runtime_set_image_prompt(runtime,
-model_id,
-image_path,
+  return _rwkvmobile_runtime_set_image_unique_identifier(runtime,
+unique_identifier,
 );
 }
 
-late final _rwkvmobile_runtime_set_image_promptPtr = _lookup<
-    ffi.NativeFunction<ffi.Int Function(rwkvmobile_runtime_t , ffi.Int , ffi.Pointer<ffi.Char> )>>('rwkvmobile_runtime_set_image_prompt');
-late final _rwkvmobile_runtime_set_image_prompt = _rwkvmobile_runtime_set_image_promptPtr.asFunction<int Function(rwkvmobile_runtime_t , int , ffi.Pointer<ffi.Char> )>();
+late final _rwkvmobile_runtime_set_image_unique_identifierPtr = _lookup<
+    ffi.NativeFunction<ffi.Int Function(rwkvmobile_runtime_t , ffi.Pointer<ffi.Char> )>>('rwkvmobile_runtime_set_image_unique_identifier');
+late final _rwkvmobile_runtime_set_image_unique_identifier = _rwkvmobile_runtime_set_image_unique_identifierPtr.asFunction<int Function(rwkvmobile_runtime_t , ffi.Pointer<ffi.Char> )>();
 
 int rwkvmobile_runtime_load_whisper_encoder(rwkvmobile_runtime_t runtime,
 int model_id,

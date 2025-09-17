@@ -19,7 +19,7 @@ void custom_sleep(int seconds) {
 #endif
 }
 
-const char *msg0 = "Please analyze the picture and execute the following instruction or answer the following question: \nplease recognize the data in the data in this picture";
+char msg0[100];
 
 int main(int argc, char **argv) {
     // set stdout to be unbuffered
@@ -39,7 +39,10 @@ int main(int argc, char **argv) {
     rwkvmobile_runtime_set_bos_token(runtime, model_id, "\x16");
     rwkvmobile_runtime_set_token_banned(runtime, model_id, {0}, 1);
 
-    rwkvmobile_runtime_set_image_prompt(runtime, model_id, argv[5]);
+    const char *unique_identifier = "abababababa";
+    rwkvmobile_runtime_set_image_unique_identifier(runtime, unique_identifier);
+
+    snprintf(msg0, sizeof(msg0), "<%s>%s</%s>please recognize the table in this picture", unique_identifier, argv[5], unique_identifier);
     const char *input_list[] = {msg0};
 
     rwkvmobile_runtime_eval_chat_with_history_async(runtime, model_id, input_list, 1, 500, nullptr, 0);

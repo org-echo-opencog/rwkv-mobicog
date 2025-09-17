@@ -456,16 +456,12 @@ int rwkvmobile_runtime_release_vision_encoder(rwkvmobile_runtime_t runtime, int 
 #endif
 }
 
-int rwkvmobile_runtime_set_image_prompt(rwkvmobile_runtime_t runtime, int model_id, const char * image_path) {
-#if ENABLE_VISION
-    if (runtime == nullptr || image_path == nullptr) {
+int rwkvmobile_runtime_set_image_unique_identifier(rwkvmobile_runtime_t runtime, const char * unique_identifier) {
+    if (runtime == nullptr || unique_identifier == nullptr) {
         return RWKV_ERROR_INVALID_PARAMETERS;
     }
     auto rt = static_cast<class runtime *>(runtime);
-    return rt->set_image_prompt(model_id, image_path);
-#else
-    return RWKV_ERROR_UNSUPPORTED;
-#endif
+    return rt->set_image_unique_identifier(unique_identifier);
 }
 
 int rwkvmobile_runtime_load_whisper_encoder(rwkvmobile_runtime_t runtime, int model_id, const char * encoder_path) {
