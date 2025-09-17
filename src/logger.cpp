@@ -124,7 +124,7 @@ void Logger::_log(const std::string &msg) {
     _condition.notify_one();
 }
 
-std::string logger_get_log() {
+std::string& logger_get_log() {
     return logger.get_log();
 }
 

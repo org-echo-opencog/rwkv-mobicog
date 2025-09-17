@@ -19,7 +19,7 @@ void LOGD(const char *fmt, ...);
 void LOGW(const char *fmt, ...);
 void LOGE(const char *fmt, ...);
 
-std::string logger_get_log();
+std::string& logger_get_log();
 
 void logger_set_loglevel(int);
 
@@ -33,9 +33,10 @@ public:
     ~Logger() = default;
     void log(const std::string &msg, const int level = RWKV_LOG_LEVEL_INFO);
 
-    std::string get_log() {
+    std::string& get_log() {
         std::lock_guard<std::mutex> lock(_mutex);
-        std::string log;
+        static std::string log;
+        log.clear();
         for (int i = _buffer_start; i != _buffer_end; i = (i + 1) % LOG_RING_BUFFER_SIZE) {
             log += _buffer[i];
         }
