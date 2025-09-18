@@ -702,8 +702,8 @@ int runtime::chat(int model_id, std::vector<std::string> inputs, const int max_l
     int ret;
 
     model->sampler->clear_occurences();
-    for (int i = 1; i < inputs.size(); i += 2) {
-        std::vector<int> ids = model->tokenizer->encode(" " + inputs[i]);
+    if (inputs.size() % 2 == 0) {
+        std::vector<int> ids = model->tokenizer->encode(" " + inputs[inputs.size() - 1]);
         for (auto id: ids) {
             model->sampler->update_occurences(id);
         }
@@ -900,13 +900,6 @@ int runtime::chat_batch(int model_id, std::vector<std::vector<std::string>> inpu
             }
         }
         _prefill_progress_finish();
-
-        for (size_t j = 1; j < inputs[batch_idx].size(); j += 2) {
-            std::vector<int> ids = model->tokenizer->encode(" " + inputs[batch_idx][j]);
-            for (auto id: ids) {
-                occurences_batch[batch_idx][id]++;
-            }
-        }
 
         if (logits == nullptr) {
             if (nodes_batch[batch_idx]->logits.size() == num_vocab) {
@@ -1931,9 +1924,6 @@ int runtime::clear_state(int model_id) {
     }
     auto &model = _models.at(model_id);
 
-    if (model->sampler != nullptr) {
-        model->sampler->clear_occurences();
-    }
     if (model->backend != nullptr) {
         model->backend->zero_state();
         int max_supported_batch_size = *std::max_element(model->backend->supported_batch_sizes.begin(), model->backend->supported_batch_sizes.end());
