@@ -1017,18 +1017,23 @@ int runtime::chat_batch(int model_id, std::vector<std::vector<std::string>> inpu
                 // get state for new active batches
                 std::vector<std::any> temp_states(new_active_count);
                 for (int k = 0; k < new_active_count; k++) {
-                    int original_slot = new_active_batch_indices[k];
-                    model->backend->get_state_on_batch_slot(original_slot, temp_states[k]);
+                    int original_batch_idx = new_active_batch_indices[k];
+                    int current_slot_idx = original_to_active_mapping[original_batch_idx];
+                    if (current_slot_idx >= 0) {
+                        model->backend->get_state_on_batch_slot(current_slot_idx, temp_states[k]);
+                    }
                 }
 
                 // rearrange logits for new active batches
                 std::vector<float> temp_logits(new_active_count * num_vocab);
                 for (int k = 0; k < new_active_count; k++) {
-                    int original_slot = new_active_batch_indices[k];
-                    // copy logits from original slot to new position
-                    memcpy(temp_logits.data() + k * num_vocab, 
-                           logits + original_slot * num_vocab, 
-                           num_vocab * sizeof(float));
+                    int original_batch_idx = new_active_batch_indices[k];
+                    int current_slot_idx = original_to_active_mapping[original_batch_idx];
+                    if (current_slot_idx >= 0 && current_slot_idx < current_batch_size) {
+                        memcpy(temp_logits.data() + k * num_vocab, 
+                            logits + current_slot_idx * num_vocab, 
+                            num_vocab * sizeof(float));
+                    }
                 }
                 // copy rearranged logits back
                 memcpy(logits, temp_logits.data(), new_active_count * num_vocab * sizeof(float));
@@ -1036,8 +1041,17 @@ int runtime::chat_batch(int model_id, std::vector<std::vector<std::string>> inpu
                 // rearrange decoded_idx for new active batches
                 std::vector<int> temp_decoded_idx(new_active_count);
                 for (int k = 0; k < new_active_count; k++) {
-                    int original_slot = new_active_batch_indices[k];
-                    temp_decoded_idx[k] = decoded_idx[original_slot];
+                    int original_batch_idx = new_active_batch_indices[k];
+                    int current_slot_idx = original_to_active_mapping[original_batch_idx];
+                    if (current_slot_idx >= 0 && current_slot_idx < current_batch_size) {
+                        temp_decoded_idx[k] = decoded_idx[current_slot_idx];
+                        LOGD("Rearranging decoded_idx[%d]: original_batch=%d, current_slot=%d, token=%d\n", 
+                             k, original_batch_idx, current_slot_idx, decoded_idx[current_slot_idx]);
+                    } else {
+                        LOGE("Invalid mapping for batch %d: current_slot=%d (should be in [0,%d))\n", 
+                             original_batch_idx, current_slot_idx, current_batch_size);
+                        temp_decoded_idx[k] = 0; // fallback to EOS to avoid undefined behavior
+                    }
                 }
                 // copy rearranged decoded_idx back
                 for (int k = 0; k < new_active_count; k++) {
