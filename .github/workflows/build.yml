@@ -175,6 +175,7 @@ jobs:
     - name: build
       run: |
         rustup target add --toolchain stable-x86_64-unknown-linux-gnu aarch64-linux-android
+        rustup target add --toolchain 1.89.0-x86_64-unknown-linux-gnu aarch64-linux-android
         rm -rf build
         mkdir build && cd build
         cmake .. -DENABLE_NCNN_BACKEND=ON -DENABLE_WEBRWKV_BACKEND=ON -DENABLE_QNN_BACKEND=ON \
