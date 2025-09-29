@@ -1239,22 +1239,20 @@ int qnn_backend::setup_output_tensors_for_graph(int graph_id, int total_graphs_c
     Qnn_Tensor_t* vFirstTensorToUse = isPrefill ? vFirstTensorPrefill : vFirstTensor;
     Qnn_Tensor_t* hiddenStateTensorToUse = isPrefill ? hiddenStateTensorPrefill : hiddenStateTensor;
 
-    if (logitsOutputTensor != nullptr) {
+    if (logitsOutputTensor != nullptr || hiddenStateTensorToUse != nullptr) {
         // tensors initialized previously; set up with shared tensors
         for (size_t i = 0; i < graphInfo.numOutputTensors; i++) {
             auto tensorName = std::string(QNN_TENSOR_GET_NAME(graphInfo.outputTensors[i]));
-            if (tensorName.find("v_first") != std::string::npos) {
-                if (vFirstTensorToUse != nullptr) {
-                    sharedTensorMap[tensorName] = vFirstTensorToUse;
-                }
+            if (tensorName.find("v_first") != std::string::npos && vFirstTensorToUse != nullptr) {
+                sharedTensorMap[tensorName] = vFirstTensorToUse;
             } else if (tensorName.find("state") != std::string::npos) {
                 if (stateTensorsNameToTensorPointer.find(tensorName) != stateTensorsNameToTensorPointer.end()) {
                     sharedTensorMap[tensorName] = (Qnn_Tensor_t*)stateTensorsNameToTensorPointer[tensorName];
                 }
             } else if (tensorName.find("out") != std::string::npos) {
-                if (graph_id == total_graphs_count - 1) {
+                if (graph_id == total_graphs_count - 1 && logitsOutputTensor != nullptr) {
                     sharedTensorMap[tensorName] = logitsOutputTensor;
-                } else if (hiddenStateTensorToUse != nullptr) {
+                } else if (graph_id != total_graphs_count - 1 && hiddenStateTensorToUse != nullptr) {
                     sharedTensorMap[tensorName] = hiddenStateTensorToUse;
                 }
             }
@@ -1264,6 +1262,21 @@ int qnn_backend::setup_output_tensors_for_graph(int graph_id, int total_graphs_c
                                             tensorNameToSize, contextHandle, sharedTensorMap)) {
             LOGE("Error in setting up shared Output Tensors for graph %d", graph_id);
             return RWKV_ERROR_IO;
+        }
+
+        for (size_t i = 0; i < graphInfo.numOutputTensors; i++) {
+            auto tensorName = std::string(QNN_TENSOR_GET_NAME(graphInfo.outputTensors[i]));
+            if (tensorName.find("state") != std::string::npos) {
+                stateTensorsNameToTensorPointer[tensorName] = (Qnn_Tensor_t*)tensorNameToTensorPointer[tensorName];
+            } else if (graph_id == total_graphs_count - 1 && logitsOutputTensor == nullptr && tensorName.find("out") != std::string::npos) {
+                logitsOutputTensor = (Qnn_Tensor_t*)tensorNameToTensorPointer[tensorName];
+            } else if (graph_id != total_graphs_count - 1 && tensorName.find("out") != std::string::npos) {
+                if (isPrefill && hiddenStateTensorPrefill == nullptr) {
+                    hiddenStateTensorPrefill = (Qnn_Tensor_t*)tensorNameToTensorPointer[tensorName];
+                } else if (!isPrefill && hiddenStateTensor == nullptr) {
+                    hiddenStateTensor = (Qnn_Tensor_t*)tensorNameToTensorPointer[tensorName];
+                }
+            }
         }
     } else {
         // allocate output tensors
@@ -2063,6 +2076,43 @@ int qnn_backend::copy_deep_embedding_to_qnn_tensor_prefill(int idx, int dst_offs
     return RWKV_SUCCESS;
 }
 
+int qnn_backend::debug_dump_state() { 
+    // for (auto &[tensorName, tensor] : stateTensorsNameToTensorPointer) {
+    for (int i = 0; i < 3 * n_layers; i++) {
+        std::string tensorName = "state" + std::to_string(i) + "_out";
+        Qnn_Tensor_t *qnntensor = (Qnn_Tensor_t*)stateTensorsNameToTensorPointer[tensorName];
+
+        void *buffer = qnnIOTensorUtils->getBuffer(qnntensor);
+        if (buffer == nullptr) {
+            LOGE("%s: Failed to get buffer for tensor %s", __func__, tensorName.c_str());
+            return RWKV_ERROR_IO;
+        }
+        std::string msg = tensorName + ": ";
+        if (QNN_TENSOR_GET_DATA_TYPE(qnntensor) == QNN_DATATYPE_FLOAT_16) {
+            for (int i = 0; i < 10; i++) {
+                msg += std::to_string(((__fp16*)buffer)[i]) + " ";
+            }
+        }
+        else if (QNN_TENSOR_GET_DATA_TYPE(qnntensor) == QNN_DATATYPE_FLOAT_32)
+            for (int i = 0; i < 10; i++) {
+                msg += std::to_string(((float*)buffer)[i]) + " ";
+            }
+        else {
+            float *float_buffer = new float[10];
+            datautil::tfNToFloat<uint16_t>(float_buffer, reinterpret_cast<uint16_t*>(buffer),
+                QNN_TENSOR_GET_QUANT_PARAMS(qnntensor).scaleOffsetEncoding.offset,
+                QNN_TENSOR_GET_QUANT_PARAMS(qnntensor).scaleOffsetEncoding.scale,
+                10);
+            for (int i = 0; i < 10; i++) {
+                msg += std::to_string(float_buffer[i]) + " ";
+            }
+            delete[] float_buffer;
+        }
+        LOGI("%s", msg.c_str());
+    }
+    return RWKV_SUCCESS;
+}
+
 int qnn_backend::eval(int id, float *& logits) {
     {
         std::lock_guard<std::mutex> lock(g_qnn_backend_context_ptr->qnnMutex);
@@ -2120,6 +2170,7 @@ int qnn_backend::eval(int id, float *& logits) {
         }
     }
 
+    // debug_dump_state();
     return post_graph_execute(logits);
 }
 
@@ -2361,7 +2412,7 @@ bool qnn_backend::is_available() {
 }
 
 int qnn_backend::zero_state() {
-    if (supported_batch_sizes.size() > 0)
+    if (supported_batch_sizes.size() > 1)
         return zero_state_on_batch_slot(0);
 
     if (!isTensorInitialized) return RWKV_SUCCESS;
@@ -2387,7 +2438,7 @@ int qnn_backend::zero_state() {
 }
 
 int qnn_backend::get_state(std::any &state) {
-    if (supported_batch_sizes.size() > 0)
+    if (supported_batch_sizes.size() > 1)
         return get_state_on_batch_slot(0, state);
 
     auto new_state = std::vector<std::vector<uint8_t>>();
@@ -2405,7 +2456,7 @@ int qnn_backend::get_state(std::any &state) {
 }
 
 int qnn_backend::set_state(std::any state) {
-    if (supported_batch_sizes.size() > 0)
+    if (supported_batch_sizes.size() > 1)
         return set_state_on_batch_slot(0, state);
 
     if (!state.has_value()) return RWKV_SUCCESS;

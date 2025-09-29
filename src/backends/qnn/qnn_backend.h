@@ -68,6 +68,8 @@ public:
         return prefill_speed;
     }
 
+    int debug_dump_state();
+
     int get_state_on_batch_slot(int slot, std::any &state) override;
     int set_state_on_batch_slot(int slot, std::any state) override;
     int zero_state_on_batch_slot(int slot) override;
