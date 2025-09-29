@@ -2412,65 +2412,15 @@ bool qnn_backend::is_available() {
 }
 
 int qnn_backend::zero_state() {
-    if (supported_batch_sizes.size() > 1)
-        return zero_state_on_batch_slot(0);
-
-    if (!isTensorInitialized) return RWKV_SUCCESS;
-    for (auto &[tensorName, tensor] : stateTensorsNameToTensorPointer) {
-        size_t element_count = 1;
-        Qnn_Tensor_t *qnntensor = (Qnn_Tensor_t*)tensor;
-        for (int j = 0; j < QNN_TENSOR_GET_RANK(qnntensor); j++) {
-            element_count *= *(QNN_TENSOR_GET_DIMENSIONS(qnntensor) + j);
-        }
-        void *buffer = qnnIOTensorUtils->getBuffer(qnntensor);
-        if (buffer == nullptr) {
-            LOGE("%s: Failed to get buffer for tensor %s", __func__, tensorName.c_str());
-            return RWKV_ERROR_IO;
-        }
-        if (QNN_TENSOR_GET_DATA_TYPE(qnntensor) == QNN_DATATYPE_FLOAT_16)
-            memset(buffer, 0, element_count * sizeof(uint16_t));
-        else if (QNN_TENSOR_GET_DATA_TYPE(qnntensor) == QNN_DATATYPE_FLOAT_32)
-            memset(buffer, 0, element_count * sizeof(float));
-        else
-            fill_quantized_tensor(0.0, qnntensor);
-    }
-    return RWKV_SUCCESS;
+    return zero_state_on_batch_slot(0);
 }
 
 int qnn_backend::get_state(std::any &state) {
-    if (supported_batch_sizes.size() > 1)
-        return get_state_on_batch_slot(0, state);
-
-    auto new_state = std::vector<std::vector<uint8_t>>();
-    for (int i = 0; i < 3 * n_layers; i++) {
-        Qnn_Tensor_t *tensor = (Qnn_Tensor_t*)stateTensorsNameToTensorPointer["state" + std::to_string(i) + "_out"];
-        uint8_t *buffer = (uint8_t*)qnnIOTensorUtils->getBuffer(tensor);
-        if (buffer == nullptr) {
-            LOGE("%s: Failed to get buffer for state tensor %i", __func__, i);
-            return RWKV_ERROR_IO;
-        }
-        new_state.push_back(std::vector<uint8_t>(buffer, buffer + qnnIOTensorUtils->getBufferSize(tensor)));
-    }
-    state = new_state;
-    return RWKV_SUCCESS;
+    return get_state_on_batch_slot(0, state);
 }
 
 int qnn_backend::set_state(std::any state) {
-    if (supported_batch_sizes.size() > 1)
-        return set_state_on_batch_slot(0, state);
-
-    if (!state.has_value()) return RWKV_SUCCESS;
-    auto new_state = std::any_cast<std::vector<std::vector<uint8_t>>>(state);
-    for (int i = 0; i < 3 * n_layers; i++) {
-        Qnn_Tensor_t *tensor = (Qnn_Tensor_t*)stateTensorsNameToTensorPointer["state" + std::to_string(i) + "_out"];
-        void *buffer = qnnIOTensorUtils->getBuffer(tensor);
-        if (buffer == nullptr) {
-            LOGE("%s: Failed to get buffer for state tensor %i", __func__, i);
-            return RWKV_ERROR_IO;
-        }
-        memcpy(buffer, new_state[i].data(), new_state[i].size());
-    }
-    return RWKV_SUCCESS;
+    return set_state_on_batch_slot(0, state);
 }
 
 int qnn_backend::free_state(std::any state) {
