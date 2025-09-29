@@ -245,7 +245,7 @@ if (ENABLE_WHISPER OR ENABLE_TTS)
     FetchContent_Declare(
         Eigen
         GIT_REPOSITORY https://gitlab.com/libeigen/eigen.git
-        GIT_TAG 3.4.1
+        GIT_TAG 3.3
         GIT_SHALLOW TRUE
         GIT_PROGRESS TRUE
     )
