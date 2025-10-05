@@ -1239,7 +1239,7 @@ int qnn_backend::setup_output_tensors_for_graph(int graph_id, int total_graphs_c
     Qnn_Tensor_t* vFirstTensorToUse = isPrefill ? vFirstTensorPrefill : vFirstTensor;
     Qnn_Tensor_t* hiddenStateTensorToUse = isPrefill ? hiddenStateTensorPrefill : hiddenStateTensor;
 
-    if (logitsOutputTensor != nullptr) {
+    if ((logitsOutputTensor != nullptr && graph_id == total_graphs_count - 1) || (hiddenStateTensorToUse != nullptr && graph_id != total_graphs_count - 1)) {
         // tensors initialized previously; set up with shared tensors
         for (size_t i = 0; i < graphInfo.numOutputTensors; i++) {
             auto tensorName = std::string(QNN_TENSOR_GET_NAME(graphInfo.outputTensors[i]));
@@ -1265,46 +1265,13 @@ int qnn_backend::setup_output_tensors_for_graph(int graph_id, int total_graphs_c
             LOGE("Error in setting up shared Output Tensors for graph %d", graph_id);
             return RWKV_ERROR_IO;
         }
-    // TODO: need to think twice about this
-    // if (logitsOutputTensor != nullptr || hiddenStateTensorToUse != nullptr) {
-    //     // tensors initialized previously; set up with shared tensors
-    //     for (size_t i = 0; i < graphInfo.numOutputTensors; i++) {
-    //         auto tensorName = std::string(QNN_TENSOR_GET_NAME(graphInfo.outputTensors[i]));
-    //         if (tensorName.find("v_first") != std::string::npos && vFirstTensorToUse != nullptr) {
-    //             sharedTensorMap[tensorName] = vFirstTensorToUse;
-    //         } else if (tensorName.find("state") != std::string::npos) {
-    //             if (stateTensorsNameToTensorPointer.find(tensorName) != stateTensorsNameToTensorPointer.end()) {
-    //                 sharedTensorMap[tensorName] = (Qnn_Tensor_t*)stateTensorsNameToTensorPointer[tensorName];
-    //             }
-    //         } else if (tensorName.find("out") != std::string::npos) {
-    //             if (graph_id == total_graphs_count - 1 && logitsOutputTensor != nullptr) {
-    //                 sharedTensorMap[tensorName] = logitsOutputTensor;
-    //             } else if (graph_id != total_graphs_count - 1 && hiddenStateTensorToUse != nullptr) {
-    //                 sharedTensorMap[tensorName] = hiddenStateTensorToUse;
-    //             }
-    //         }
-    //     }
 
-    //     if (!qnnIOTensorUtils->setupOutputWithSharedTensors(&outputTensors[graph_id], tensorNameToTensorPointer, graphInfo,
-    //                                         tensorNameToSize, contextHandle, sharedTensorMap)) {
-    //         LOGE("Error in setting up shared Output Tensors for graph %d", graph_id);
-    //         return RWKV_ERROR_IO;
-    //     }
-
-    //     for (size_t i = 0; i < graphInfo.numOutputTensors; i++) {
-    //         auto tensorName = std::string(QNN_TENSOR_GET_NAME(graphInfo.outputTensors[i]));
-    //         if (tensorName.find("state") != std::string::npos) {
-    //             stateTensorsNameToTensorPointer[tensorName] = (Qnn_Tensor_t*)tensorNameToTensorPointer[tensorName];
-    //         } else if (graph_id == total_graphs_count - 1 && logitsOutputTensor == nullptr && tensorName.find("out") != std::string::npos) {
-    //             logitsOutputTensor = (Qnn_Tensor_t*)tensorNameToTensorPointer[tensorName];
-    //         } else if (graph_id != total_graphs_count - 1 && tensorName.find("out") != std::string::npos) {
-    //             if (isPrefill && hiddenStateTensorPrefill == nullptr) {
-    //                 hiddenStateTensorPrefill = (Qnn_Tensor_t*)tensorNameToTensorPointer[tensorName];
-    //             } else if (!isPrefill && hiddenStateTensor == nullptr) {
-    //                 hiddenStateTensor = (Qnn_Tensor_t*)tensorNameToTensorPointer[tensorName];
-    //             }
-    //         }
-    //     }
+        for (size_t i = 0; i < graphInfo.numOutputTensors; i++) {
+            auto tensorName = std::string(QNN_TENSOR_GET_NAME(graphInfo.outputTensors[i]));
+            if (tensorName.find("state") != std::string::npos && stateTensorsNameToTensorPointer.find(tensorName) == stateTensorsNameToTensorPointer.end()) {
+                stateTensorsNameToTensorPointer[tensorName] = (Qnn_Tensor_t*)tensorNameToTensorPointer[tensorName];
+            }
+        }
     } else {
         // allocate output tensors
         if (!qnnIOTensorUtils->setupOutputTensors(&outputTensors[graph_id], tensorNameToTensorPointer, graphInfo,
