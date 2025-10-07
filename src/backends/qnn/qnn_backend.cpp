@@ -1810,10 +1810,10 @@ int qnn_backend::qnn_initialize_tensors() {
                 for (size_t i = 0; i < graphInfo.numOutputTensors; i++) {
                     auto tensorName = std::string(QNN_TENSOR_GET_NAME(graphInfo.outputTensors[i]));
                     if (tensorName.find("v_first") != std::string::npos && vFirstTensorPrefill == nullptr) {
-                        vFirstTensorPrefill = (Qnn_Tensor_t*)prefillGraphsTensorNameToTensorPointer[graph_id][tensorName];
+                        vFirstTensorPrefill = (Qnn_Tensor_t*)embdPrefillGraphsTensorNameToTensorPointer[graph_id][tensorName];
                     } else if (tensorName.find("state") == std::string::npos && tensorName.find("out") != std::string::npos) {
                         if (graph_id != qnnPrefillGraphsCount - 1 && hiddenStateTensorPrefill == nullptr) {
-                            hiddenStateTensorPrefill = (Qnn_Tensor_t*)prefillGraphsTensorNameToTensorPointer[graph_id][tensorName];
+                            hiddenStateTensorPrefill = (Qnn_Tensor_t*)embdPrefillGraphsTensorNameToTensorPointer[graph_id][tensorName];
                         }
                     }
                 }
