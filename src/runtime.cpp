@@ -334,7 +334,7 @@ int runtime::load_initial_state(int model_id, std::string state_path) {
     }
 
     std::any initial_state;
-    RMPack state_pack(state_path);
+    RMPackReader state_pack(state_path);
     int hidden_size_config = state_pack.getConfig()["hidden_size"];
     auto files = state_pack.getFiles();
     if (files.size() != model->backend->n_layers) {
@@ -579,6 +579,11 @@ std::vector<runtime::TokenChunk> runtime::split_text_by_image_and_token_num(cons
     }
 
     return final_chunks;
+}
+
+int runtime::save_state_by_history(int model_id, std::vector<std::string> history, std::string state_path) {
+    // TODO
+    return RWKV_ERROR_RUNTIME | RWKV_ERROR_UNSUPPORTED;
 }
 
 int runtime::chat(int model_id, std::vector<std::string> inputs, const int max_length, void (*callback)(const char *, const int, const char *), bool enable_reasoning) {

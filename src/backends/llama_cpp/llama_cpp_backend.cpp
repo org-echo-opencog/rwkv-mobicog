@@ -186,6 +186,18 @@ int llama_cpp_backend::load_raw_states(std::vector<std::vector<half_float::half>
     return RWKV_SUCCESS;
 }
 
+int llama_cpp_backend::serialize_runtime_state(std::any state, std::vector<uint8_t> &data) {
+    if (!state.has_value()) return RWKV_ERROR_IO;
+    auto new_state = std::any_cast<std::vector<uint8_t>>(state);
+    data = std::vector<uint8_t>(new_state);
+    return RWKV_SUCCESS;
+}
+
+int llama_cpp_backend::deserialize_runtime_state(std::vector<uint8_t> &data, std::any &state) {
+    state = std::any(std::vector<uint8_t>(data));
+    return RWKV_SUCCESS;
+}
+
 int llama_cpp_backend::release_model() {
     if (ctx)
         llama_free(ctx);

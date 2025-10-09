@@ -10,7 +10,7 @@
 
 using json = nlohmann::json;
 
-class RMPack {
+class RMPackReader {
 public:
     struct FileInfo {
         std::string filename;
@@ -28,11 +28,11 @@ public:
         size_t size;
     };
 
-    explicit RMPack(const std::string& file_path);
-    ~RMPack();
+    explicit RMPackReader(const std::string& file_path);
+    ~RMPackReader();
 
-    RMPack(const RMPack&) = delete;
-    RMPack& operator=(const RMPack&) = delete;
+    RMPackReader(const RMPackReader&) = delete;
+    RMPackReader& operator=(const RMPackReader&) = delete;
 
     const json& getConfig() const;
     const std::vector<FileInfo>& getFiles() const;

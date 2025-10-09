@@ -12,14 +12,14 @@
 
 using json = nlohmann::json;
 
-const char* RMPack::MAGIC_HEADER = "RWKVMBLE";
-const size_t RMPack::MAGIC_HEADER_SIZE = 8;
+const char* RMPackReader::MAGIC_HEADER = "RWKVMBLE";
+const size_t RMPackReader::MAGIC_HEADER_SIZE = 8;
 
-RMPack::RMPack(const std::string& file_path) : file_path_(file_path), fd_(-1) {
+RMPackReader::RMPackReader(const std::string& file_path) : file_path_(file_path), fd_(-1) {
     loadFile();
 }
 
-RMPack::~RMPack() {
+RMPackReader::~RMPackReader() {
 #ifndef _WIN32
     for (auto& mapping : mmap_mappings_) {
         if (mapping.second.addr != nullptr) {
@@ -43,7 +43,7 @@ RMPack::~RMPack() {
     }
 }
 
-void RMPack::loadFile() {
+void RMPackReader::loadFile() {
 #ifndef _WIN32
     fd_ = open(file_path_.c_str(), O_RDONLY);
     if (fd_ == -1) {
@@ -124,15 +124,15 @@ void RMPack::loadFile() {
     }
 }
 
-const json& RMPack::getConfig() const {
+const json& RMPackReader::getConfig() const {
     return config_;
 }
 
-const std::vector<RMPack::FileInfo>& RMPack::getFiles() const {
+const std::vector<RMPackReader::FileInfo>& RMPackReader::getFiles() const {
     return files_;
 }
 
-const RMPack::FileInfo* RMPack::getFileInfo(const std::string& filename) const {
+const RMPackReader::FileInfo* RMPackReader::getFileInfo(const std::string& filename) const {
     for (const auto& file : files_) {
         if (file.filename == filename) {
             return &file;
@@ -141,7 +141,7 @@ const RMPack::FileInfo* RMPack::getFileInfo(const std::string& filename) const {
     return nullptr;
 }
 
-void* RMPack::mmapFile(const std::string& filename) {
+void* RMPackReader::mmapFile(const std::string& filename) {
 #ifndef _WIN32
     auto it = mmap_mappings_.find(filename);
     if (it != mmap_mappings_.end()) {
@@ -169,7 +169,7 @@ void* RMPack::mmapFile(const std::string& filename) {
 #endif
 }
 
-void RMPack::unmapFile(const std::string& filename) {
+void RMPackReader::unmapFile(const std::string& filename) {
 #ifndef _WIN32
     auto it = mmap_mappings_.find(filename);
     if (it == mmap_mappings_.end()) {
@@ -184,7 +184,7 @@ void RMPack::unmapFile(const std::string& filename) {
 #endif
 }
 
-void* RMPack::readFileToMemory(const std::string& filename) {
+void* RMPackReader::readFileToMemory(const std::string& filename) {
     auto it = memory_data_.find(filename);
     if (it != memory_data_.end()) {
         return it->second.data;
@@ -221,7 +221,7 @@ void* RMPack::readFileToMemory(const std::string& filename) {
     return data;
 }
 
-void RMPack::freeFileMemory(const std::string& filename) {
+void RMPackReader::freeFileMemory(const std::string& filename) {
     auto it = memory_data_.find(filename);
     if (it == memory_data_.end()) {
         return;
@@ -234,16 +234,16 @@ void RMPack::freeFileMemory(const std::string& filename) {
     memory_data_.erase(it);
 }
 
-size_t RMPack::getFileSize(const std::string& filename) const {
+size_t RMPackReader::getFileSize(const std::string& filename) const {
     const FileInfo* file_info = getFileInfo(filename);
     return file_info ? file_info->size : 0;
 }
 
-bool RMPack::hasFile(const std::string& filename) const {
+bool RMPackReader::hasFile(const std::string& filename) const {
     return getFileInfo(filename) != nullptr;
 }
 
-void RMPack::listFiles() const {
+void RMPackReader::listFiles() const {
     std::cout << "RWKV模型文件: " << file_path_ << std::endl;
     std::cout << "配置项:" << std::endl;
     for (const auto& [key, value] : config_.items()) {

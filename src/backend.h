@@ -65,6 +65,8 @@ public:
     virtual double get_decode_speed() { return -1; }
 
     virtual int load_raw_states(std::vector<std::vector<half_float::half>> states) { return RWKV_ERROR_UNSUPPORTED; };
+    virtual int serialize_runtime_state(std::any state, std::vector<uint8_t> &states) { return RWKV_ERROR_UNSUPPORTED; };
+    virtual int deserialize_runtime_state(std::vector<uint8_t> &states, std::any &state) { return RWKV_ERROR_UNSUPPORTED; };
 
     int get_head_count() { return num_heads; }
     int get_hidden_size() { return hidden_size; }

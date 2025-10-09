@@ -444,7 +444,7 @@ int qnn_backend::load_model(std::string model_path) {
     if (is_rmpack) {
 #ifndef _WIN32
         try {
-            rmpack = new RMPack(model_path);
+            rmpack = new RMPackReader(model_path);
         } catch (const std::exception& e) {
             LOGE("Error loading rmpack: %s", e.what());
             return RWKV_ERROR_MODEL | RWKV_ERROR_IO;
@@ -2522,6 +2522,10 @@ int qnn_backend::zero_state_on_batch_slot(int slot) {
 
 int qnn_backend::load_raw_states(std::vector<std::vector<half_float::half>> states) {
     zero_state();
+    if (states.size() != n_layers) {
+        LOGE("%s: The state size is not equal to the number of layers, expected %d, got %d", __func__, n_layers, states.size());
+        return RWKV_ERROR_IO;
+    }
     for (int i = 0; i < n_layers; i++) {
         Qnn_Tensor_t *tensor = (Qnn_Tensor_t*)stateTensorsNameToTensorPointer["state" + std::to_string(i * 3 + 1) + "_out"];
         void *buffer = qnnIOTensorUtils->getBuffer(tensor);
@@ -2532,6 +2536,41 @@ int qnn_backend::load_raw_states(std::vector<std::vector<half_float::half>> stat
         memcpy(buffer, states[i].data(), states[i].size() * sizeof(half_float::half));
     }
 
+    return RWKV_SUCCESS;
+}
+
+int qnn_backend::serialize_runtime_state(std::any state, std::vector<uint8_t> &data) {
+    if (!state.has_value()) return RWKV_ERROR_IO;
+    auto new_state = std::any_cast<std::vector<std::vector<uint8_t>>>(state);
+    for (int i = 0; i < new_state.size(); i++) {
+        int32_t size = static_cast<int32_t>(new_state[i].size());
+        uint8_t *p = reinterpret_cast<uint8_t*>(&size);
+        for (size_t j = 0; j < sizeof(int32_t); j++) {
+            data.push_back(p[j]);
+        }
+        data.insert(data.end(), new_state[i].begin(), new_state[i].end());
+    }
+    return RWKV_SUCCESS;
+}
+
+int qnn_backend::deserialize_runtime_state(std::vector<uint8_t> &data, std::any &state) {
+    auto new_state = std::vector<std::vector<uint8_t>>();
+    size_t offset = 0;
+    while (offset + sizeof(int32_t) <= data.size()) {
+        int32_t size = 0;
+        for (size_t j = 0; j < sizeof(int32_t); j++) {
+            ((uint8_t*)&size)[j] = data[offset + j];
+        }
+        offset += sizeof(int32_t);
+        if (offset + size > data.size()) {
+            LOGE("state data is not complete");
+            return RWKV_ERROR_IO;
+        }
+        std::vector<uint8_t> buf(data.begin() + offset, data.begin() + offset + size);
+        new_state.push_back(std::move(buf));
+        offset += size;
+    }
+    state = new_state;
     return RWKV_SUCCESS;
 }
 

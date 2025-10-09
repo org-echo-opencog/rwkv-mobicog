@@ -65,6 +65,9 @@ public:
     int set_state_on_batch_slot(int slot, std::any state) override;
     int zero_state_on_batch_slot(int slot) override;
 
+    int serialize_runtime_state(std::any state, std::vector<uint8_t> &data) override;
+    int deserialize_runtime_state(std::vector<uint8_t> &data, std::any &state) override;
+
     int release_model() override;
     int release() override;
 private:
