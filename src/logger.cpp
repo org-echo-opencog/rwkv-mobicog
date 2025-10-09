@@ -25,11 +25,12 @@ void Logger::log(const std::string &msg, const int level) {
         return splits;
     };
 
+    _log(log_msg);
+
     // split log_msg into splits if it's too long
     if (log_msg.size() > 1024) {
         auto splits = split_log_msg(log_msg, 1024);
         for (auto &split : splits) {
-            _log(split);
             if (level >= _level) {
                 switch (level) {
                     case RWKV_LOG_LEVEL_DEBUG:
@@ -49,7 +50,6 @@ void Logger::log(const std::string &msg, const int level) {
             }
         }
     } else {
-        _log(log_msg);
         if (level >= _level) {
             switch (level) {
                 case RWKV_LOG_LEVEL_DEBUG:

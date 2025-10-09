@@ -9,6 +9,7 @@
 #include <cstring>
 #include <thread>
 #include "rmpack.h"
+#include "utils.h"
 #ifdef ENABLE_WEBRWKV
 #include "web_rwkv_backend.h"
 #endif
@@ -524,8 +525,8 @@ std::vector<runtime::TokenChunk> runtime::split_text_by_image_and_token_num(cons
     std::vector<TokenChunk> chunks;
     std::string remaining_text = text;
 
+    // Helper: split by <image> tags as before
     while (!remaining_text.empty()) {
-        // Look for <image_unique_identifier>image_path</image_unique_identifier> pattern
         std::string image_unique_identifier_start = "<" + _image_unique_identifier + ">";
         std::string image_unique_identifier_end = "</" + _image_unique_identifier + ">";
         size_t image_start = remaining_text.find(image_unique_identifier_start);
@@ -562,18 +563,70 @@ std::vector<runtime::TokenChunk> runtime::split_text_by_image_and_token_num(cons
         }
     }
 
-    // Now split regular token chunks by max_tokens_per_chunk
+    // Now split regular token chunks by max_tokens_per_chunk, also split at "Assistant"
     std::vector<TokenChunk> final_chunks;
+    const std::string assistant_str = "Assistant";
     for (const auto& chunk : chunks) {
         if (chunk.is_image) {
             final_chunks.push_back(chunk);
         } else {
-            // Split token chunk by max_tokens_per_chunk
+            // Decode tokens to string for splitting at "Assistant"
             const std::vector<int>& tokens_to_split = chunk.tokens;
-            for (size_t i = 0; i < tokens_to_split.size(); i += max_tokens_per_chunk) {
-                size_t end = std::min(i + max_tokens_per_chunk, tokens_to_split.size());
-                std::vector<int> token_chunk(tokens_to_split.begin() + i, tokens_to_split.begin() + end);
-                final_chunks.push_back({token_chunk, false, ""});
+            if (tokens_to_split.empty()) continue;
+
+            // Decode to text
+            std::string chunk_text = _models.at(model_id)->tokenizer->decode(tokens_to_split);
+
+            size_t pos = 0;
+            size_t last_pos = 0;
+            std::vector<std::string> split_texts;
+            std::vector<bool> assistant_belongs;
+            while ((pos = chunk_text.find(assistant_str, last_pos)) != std::string::npos) {
+                // If "Assistant" is at the start, skip empty chunk
+                if (pos > last_pos) {
+                    split_texts.push_back(chunk_text.substr(last_pos, pos - last_pos));
+                    assistant_belongs.push_back(false);
+                }
+                // "Assistant" itself as a chunk (belongs to next chunk)
+                split_texts.push_back(assistant_str);
+                assistant_belongs.push_back(true);
+                last_pos = pos + assistant_str.length();
+            }
+            // Add the remaining part
+            if (last_pos < chunk_text.size()) {
+                split_texts.push_back(chunk_text.substr(last_pos));
+                assistant_belongs.push_back(false);
+            }
+
+            // Now, for each split_text, encode and split by max_tokens_per_chunk
+            std::vector<int> carry_tokens;
+            for (size_t i = 0; i < split_texts.size(); ++i) {
+                std::string part = split_texts[i];
+                if (assistant_belongs[i]) {
+                    // This is "Assistant", append to carry_tokens for next chunk
+                    auto assistant_tokens = _models.at(model_id)->tokenizer->encode(part);
+                    carry_tokens.insert(carry_tokens.end(), assistant_tokens.begin(), assistant_tokens.end());
+                    continue;
+                }
+                // Normal part
+                auto part_tokens = _models.at(model_id)->tokenizer->encode(part);
+                // Prepend any carried "Assistant" tokens
+                if (!carry_tokens.empty()) {
+                    part_tokens.insert(part_tokens.begin(), carry_tokens.begin(), carry_tokens.end());
+                    carry_tokens.clear();
+                }
+                // Split by max_tokens_per_chunk
+                for (size_t j = 0; j < part_tokens.size(); j += max_tokens_per_chunk) {
+                    size_t end = std::min(j + max_tokens_per_chunk, part_tokens.size());
+                    std::vector<int> token_chunk(part_tokens.begin() + j, part_tokens.begin() + end);
+                    if (!token_chunk.empty()) {
+                        final_chunks.push_back({token_chunk, false, ""});
+                    }
+                }
+            }
+            // If any "Assistant" tokens left, put them as a chunk
+            if (!carry_tokens.empty()) {
+                final_chunks.push_back({carry_tokens, false, ""});
             }
         }
     }
@@ -619,15 +672,12 @@ int runtime::chat(int model_id, std::vector<std::string> inputs, const int max_l
     float *logits = nullptr;
     std::vector<int> tokens_to_prefill;
     auto node = model->backend->match_and_load_state(text_ids, tokens_to_prefill);
+    LOGI("matched state cache for prefix: \"%s\"", escape_special_chars(model->tokenizer->decode(node->ids)).c_str());
 
     if (tokens_to_prefill.size() > 0) {
         _prefill_progress_start(tokens_to_prefill.size());
         auto text_to_prefill = model->tokenizer->decode(tokens_to_prefill);
-        std::string debug_msg = "new tokens to prefill: text = " + text_to_prefill + ", ids = ";
-        for (auto id : tokens_to_prefill) {
-            debug_msg += std::to_string(id) + " ";
-        }
-        LOGD("%s\n", debug_msg.c_str());
+        LOGI("new text to prefill: \"%s\"", escape_special_chars(text_to_prefill).c_str());
 
         // Split text by image tags and token count, then process each chunk
         int checkpoint_interval = 256;
@@ -677,8 +727,8 @@ int runtime::chat(int model_id, std::vector<std::string> inputs, const int max_l
                         LOGE("failed to register state checkpoint for image chunk\n");
                         return ret;
                     }
+                    LOGI("registered state for text: \"%s\"", escape_special_chars(model->tokenizer->decode(node->ids)).c_str());
                 }
-                // TODO: Add your image processing logic here
             } else {
                 if (chunk.tokens.empty()) {
                     continue;
@@ -696,6 +746,7 @@ int runtime::chat(int model_id, std::vector<std::string> inputs, const int max_l
                     LOGE("failed to register state checkpoint\n");
                     return ret;
                 }
+                LOGI("registered state for text: \"%s\"", escape_special_chars(model->tokenizer->decode(node->ids)).c_str());
             }
         }
     }
@@ -804,6 +855,7 @@ int runtime::chat(int model_id, std::vector<std::string> inputs, const int max_l
             LOGE("failed to register state checkpoint\n");
             return ret;
         }
+        LOGI("registered state for text: \"%s\"", escape_special_chars(model->tokenizer->decode(node->ids)).c_str());
     }
 
     model->is_generating = false;
@@ -876,15 +928,12 @@ int runtime::chat_batch(int model_id, std::vector<std::vector<std::string>> inpu
         model->response_buffer_eos_found_batch[batch_idx] = false;
         std::vector<int> tokens_to_prefill;
         nodes_batch[batch_idx] = model->backend->match_and_load_state(text_ids_batch[batch_idx], tokens_to_prefill);
+        LOGI("batch %d matched state cache for prefix: \"%s\"", batch_idx, escape_special_chars(model->tokenizer->decode(nodes_batch[batch_idx]->ids)).c_str());
 
         // prefill needed tokens
         if (tokens_to_prefill.size() > 0) {
             _prefill_progress_start(tokens_to_prefill.size());
-            std::string debug_msg = "new tokens to prefill: text = " + model->tokenizer->decode(tokens_to_prefill) + ", ids = ";
-            for (auto id : tokens_to_prefill) {
-                debug_msg += std::to_string(id) + " ";
-            }
-            LOGD("%s\n", debug_msg.c_str());
+            LOGI("new text to prefill: \"%s\"", escape_special_chars(model->tokenizer->decode(tokens_to_prefill)).c_str());
 
             // save a state checkpoint every about 256 tokens
             int checkpoint_interval = 256;
@@ -902,6 +951,7 @@ int runtime::chat_batch(int model_id, std::vector<std::vector<std::string>> inpu
                     LOGE("failed to register state checkpoint\n");
                     return ret;
                 }
+                LOGI("registered state for text: \"%s\"", escape_special_chars(model->tokenizer->decode(nodes_batch[batch_idx]->ids)).c_str());
             }
         }
         _prefill_progress_finish();
