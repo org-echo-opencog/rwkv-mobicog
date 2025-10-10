@@ -17,6 +17,7 @@ option(ENABLE_LLAMACPP_BACKEND "Enable llama.cpp backend" ON)
 option(ENABLE_QNN_BACKEND "Enable QNN backend" OFF)
 option(ENABLE_MNN_BACKEND "Enable MNN backend" ON)
 option(ENABLE_COREML_BACKEND "Enable CoreML backend" OFF)
+option(ENABLE_OPENCOG_BACKEND "Enable OpenCog backend" ON)
 
 option(ENABLE_VISION "Enable vision" OFF)
 option(ENABLE_WHISPER "Enable whisper" OFF)
@@ -277,6 +278,10 @@ if (ENABLE_COREML_BACKEND)
     set(RWKV_MOBILE_SRCS ${RWKV_MOBILE_SRCS} src/backends/coreml/coreml_rwkv_backend.cpp)
 endif()
 
+if (ENABLE_OPENCOG_BACKEND)
+    set(RWKV_MOBILE_SRCS ${RWKV_MOBILE_SRCS} src/backends/opencog/opencog_rwkv_backend.cpp)
+endif()
+
 if (WIN32)
     add_compile_options("$<$<C_COMPILER_ID:MSVC>:/utf-8>")
     add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/utf-8>")
@@ -449,6 +454,11 @@ if (ENABLE_MNN_BACKEND)
         $<LINK_LIBRARY:WHOLE_ARCHIVE,MNN>
     )
     target_include_directories(rwkv_mobile_internal PUBLIC src/backends/mnn ${mnn_SOURCE_DIR}/include)
+endif()
+
+if (ENABLE_OPENCOG_BACKEND)
+    target_compile_definitions(rwkv_mobile_internal PUBLIC ENABLE_OPENCOG)
+    target_include_directories(rwkv_mobile_internal PUBLIC src/backends/opencog)
 endif()
 
 if (BUILD_EXAMPLES)

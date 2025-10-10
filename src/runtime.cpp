@@ -34,6 +34,10 @@
 #include "coreml_rwkv_backend.h"
 #endif
 
+#ifdef ENABLE_OPENCOG
+#include "opencog_rwkv_backend.h"
+#endif
+
 #if defined(ENABLE_VISION)
 #include "multimodal/vision/vision_encoder.h"
 #endif
@@ -67,6 +71,8 @@ std::string backend_enum_to_str(int backend) {
             return "mnn";
         case RWKV_BACKEND_COREML:
             return "coreml";
+        case RWKV_BACKEND_OPENCOG:
+            return "opencog";
         default:
             return "unknown";
     }
@@ -85,6 +91,8 @@ int backend_str_to_enum(std::string backend) {
         return RWKV_BACKEND_MNN;
     } else if (backend == "coreml") {
         return RWKV_BACKEND_COREML;
+    } else if (backend == "opencog") {
+        return RWKV_BACKEND_OPENCOG;
     }
     return -1;
 }
@@ -150,6 +158,14 @@ int runtime::load_model(std::string model_path, std::string backend_name, std::s
             [](execution_provider *p) { delete (coreml_rwkv_backend*)p; });
 #else
         LOGE("CoreML backend is not supported on this platform\n");
+        return ret_model_id;
+#endif
+    } else if (backend_id == RWKV_BACKEND_OPENCOG) {
+#ifdef ENABLE_OPENCOG
+        model_instance->backend = std::unique_ptr<execution_provider, std::function<void(execution_provider*)>>(new opencog_rwkv_backend,
+            [](execution_provider *p) { delete (opencog_rwkv_backend*)p; });
+#else
+        LOGE("OpenCog backend is not supported on this platform\n");
         return ret_model_id;
 #endif
     } else {
@@ -290,6 +306,10 @@ int runtime::get_available_backend_ids(std::vector<int> &backend_ids) {
     backend_ids.push_back(RWKV_BACKEND_LLAMACPP);
 #endif
 
+#ifdef ENABLE_MNN
+    backend_ids.push_back(RWKV_BACKEND_MNN);
+#endif
+
 #ifdef ENABLE_QNN
     if (_soc_detect.get_platform_type() == PLATFORM_SNAPDRAGON) {
         auto supported_soc_names = std::vector<std::string>{"SM8650", "SM8635", "SM8550", "SM8475"};
@@ -301,6 +321,10 @@ int runtime::get_available_backend_ids(std::vector<int> &backend_ids) {
 
 #ifdef ENABLE_COREML
     backend_ids.push_back(RWKV_BACKEND_COREML);
+#endif
+
+#ifdef ENABLE_OPENCOG
+    backend_ids.push_back(RWKV_BACKEND_OPENCOG);
 #endif
 
     return RWKV_SUCCESS;
