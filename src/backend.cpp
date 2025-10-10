@@ -31,6 +31,12 @@ state_node* execution_provider::match_and_load_state(const std::vector<int> &ids
 }
 
 int execution_provider::register_state_checkpoint(state_node* &node, const std::vector<int> &ids, const float *logits) {
+    std::any new_state;
+    get_state(new_state);
+    return register_state_checkpoint_with_state(node, ids, logits, new_state);
+}
+
+int execution_provider::register_state_checkpoint_with_state(state_node* &node, const std::vector<int> &ids, const float *logits, std::any &state) {
     for (auto &child : node->children) {
         if (child->ids.size() == ids.size() && std::equal(child->ids.begin(), child->ids.end(), ids.begin())) {
             child->activation_count++;
@@ -40,18 +46,16 @@ int execution_provider::register_state_checkpoint(state_node* &node, const std::
     }
 
     auto new_node = std::make_unique<state_node>();
-    std::any new_state;
     if (new_node == nullptr) {
         return RWKV_ERROR_RUNTIME | RWKV_ERROR_ALLOC;
     }
-    get_state(new_state);
     // new_node->ids = std::vector<int>(ids);
     // each node cumulates the ids from the root to the node
     new_node->ids = node->ids;
     new_node->ids.insert(new_node->ids.end(), ids.begin(), ids.end());
     new_node->logits.resize(vocab_size);
     memcpy(new_node->logits.data(), logits, vocab_size * sizeof(float));
-    new_node->state = std::move(new_state);
+    new_node->state = std::move(state);
     new_node->activation_count = node->activation_count;
 
     std::string debug_msg = "register_state_checkpoint: new node ids: ";

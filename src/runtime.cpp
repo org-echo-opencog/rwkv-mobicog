@@ -783,6 +783,9 @@ int runtime::chat(int model_id, std::vector<std::string> inputs, const int max_l
     int decoded_idx = 0;
     bool thinking_end_tag_found = false;
     bool is_pseudo_thinking = enable_reasoning && model->response_buffer.find("</think>") != std::string::npos;
+    const int rewind_token_list[] = {28324, 28329, 10080, 9830}; // "…\n" "。\n" "…" "。"
+    std::any state_for_rewinding;
+
     for (int i = 0; i < max_length; i++) {
         model->sampler->apply_penalties(logits, model->backend->get_num_vocab());
 
@@ -826,6 +829,12 @@ int runtime::chat(int model_id, std::vector<std::string> inputs, const int max_l
         if (model->response_buffer_eos_found || model->stop_signal) {
             LOGD("stopping generation, eos_found: %d, stop_signal: %d\n", model->response_buffer_eos_found, model->stop_signal);
             break;
+        } else if (state_for_rewinding.has_value()) {
+            state_for_rewinding.reset();
+        }
+
+        if (std::any_of(rewind_token_list, rewind_token_list + sizeof(rewind_token_list) / sizeof(rewind_token_list[0]), [decoded_idx](int token) { return decoded_idx == token; })) {
+            model->backend->get_state(state_for_rewinding);
         }
 
         ret = eval_logits(model_id, decoded_idx, logits);
@@ -849,7 +858,13 @@ int runtime::chat(int model_id, std::vector<std::string> inputs, const int max_l
     }
 
     if (response_ids_raw.size() > 0) {
-        int ret = model->backend->register_state_checkpoint(node, response_ids_raw, logits);
+        int ret;
+        if (state_for_rewinding.has_value()) {
+            response_ids_raw.pop_back();
+            ret = model->backend->register_state_checkpoint_with_state(node, response_ids_raw, logits, state_for_rewinding);
+        } else {
+            ret = model->backend->register_state_checkpoint(node, response_ids_raw, logits);
+        }
         if (ret) {
             model->is_generating = false;
             LOGE("failed to register state checkpoint\n");
@@ -912,6 +927,8 @@ int runtime::chat_batch(int model_id, std::vector<std::vector<std::string>> inpu
     std::vector<bool> is_pseudo_thinking_batch(batch_size, false);
     std::vector<std::any> state_batch(batch_size);
     std::vector<bool> thinking_end_tag_found_batch(batch_size, false);
+    const int rewind_token_list[] = {28324, 28329, 10080, 9830}; // "…\n" "。\n" "…" "。"
+    std::vector<std::any> state_for_rewinding_batch(batch_size);
 
     int ret;
     auto num_vocab = model->backend->get_num_vocab();
@@ -1042,6 +1059,12 @@ int runtime::chat_batch(int model_id, std::vector<std::vector<std::string>> inpu
                     if (tmp.find("</think>") != std::string::npos) {
                         thinking_end_tag_found_batch[original_j] = true;
                     }
+                } else if (state_for_rewinding_batch[original_j].has_value()) {
+                    state_for_rewinding_batch[original_j].reset();
+                }
+
+                if (std::any_of(rewind_token_list, rewind_token_list + sizeof(rewind_token_list) / sizeof(rewind_token_list[0]), [decoded_idx, j](int token) { return decoded_idx[j] == token; })) {
+                    model->backend->get_state_on_batch_slot(j, state_for_rewinding_batch[original_j]);
                 }
             }
         }
@@ -1176,6 +1199,12 @@ int runtime::chat_batch(int model_id, std::vector<std::vector<std::string>> inpu
     }
 
     if (response_ids_raw_batch[0].size() > 0) {
+        for (int j = 0; j < batch_size; j++) {
+            if (state_for_rewinding_batch[j].has_value()) {
+                response_ids_raw_batch[j].pop_back();
+                state_batch[j] = std::move(state_for_rewinding_batch[j]);
+            }
+        }
         int ret = model->backend->register_batch_state_checkpoint(nodes_batch, state_batch, response_ids_raw_batch, logits);
         if (ret) {
             model->is_generating = false;
