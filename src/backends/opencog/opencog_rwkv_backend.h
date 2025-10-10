@@ -4,12 +4,25 @@
 #include "backend.h"
 
 namespace rwkvmobile {
+namespace opencog {
+    struct AtomSpace;
+    class RWKVCognitiveGraph;
+}
+}
+
+namespace rwkvmobile {
 
 class opencog_rwkv_backend : public execution_provider {
 public:
+    opencog_rwkv_backend() : opencog_impl_(nullptr), model_loaded(false), model_layers(0), model_embed_dim(0), model_vocab_size(0) {}
+    
     ~opencog_rwkv_backend() {
-        release_model();
-        release();
+        try {
+            release_model();
+            release();
+        } catch (...) {
+            // Ensure destructor doesn't throw
+        }
     }
     int init(void * extra) override;
     int load_model(std::string model_path) override;
@@ -24,10 +37,12 @@ public:
     int release() override;
 
 private:
-    // OpenCog AtomSpace integration members
-    void* atomspace;  // Will cast to OpenCog's AtomSpace* when needed
+    // OpenCog integration (using void* to avoid incomplete type issues)
+    void* opencog_impl_;  // Points to OpenCogImpl struct
+    
     std::vector<float> logits_buffer;
     std::vector<std::vector<float>> state_buffers;
+    std::vector<std::vector<int>> processed_sequences;
     bool model_loaded = false;
     std::string model_file_path;
     
@@ -36,11 +51,17 @@ private:
     int model_embed_dim = 0;
     int model_vocab_size = 0;
     
+    // Processing context
+    std::vector<int> current_sequence;
+    int sequence_position = 0;
+    
     // Internal helper methods
     int load_model_parameters();
     int initialize_atomspace();
     int setup_rwkv_atoms();
     void cleanup_atomspace();
+    void update_cognitive_graph();
+    float compute_contextual_probability(int token_id);
 };
 
 }

@@ -279,7 +279,9 @@ if (ENABLE_COREML_BACKEND)
 endif()
 
 if (ENABLE_OPENCOG_BACKEND)
-    set(RWKV_MOBILE_SRCS ${RWKV_MOBILE_SRCS} src/backends/opencog/opencog_rwkv_backend.cpp)
+    set(RWKV_MOBILE_SRCS ${RWKV_MOBILE_SRCS} 
+        src/backends/opencog/opencog_rwkv_backend.cpp
+        src/backends/opencog/rwkv_atoms.cpp)
 endif()
 
 if (WIN32)
