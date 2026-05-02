@@ -79,3 +79,8 @@ target_link_libraries(test_state_loading PUBLIC rwkv_mobile_internal)
 
 add_executable(test_multiple_models test_multiple_models.cpp ../src/c_api.cpp)
 target_link_libraries(test_multiple_models PUBLIC rwkv_mobile_internal)
+
+if (ENABLE_OPENCOG_BACKEND)
+    add_executable(test_opencog test_opencog.cpp)
+    target_link_libraries(test_opencog PUBLIC rwkv_mobile_internal)
+endif()

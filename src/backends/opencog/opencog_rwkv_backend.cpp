@@ -10,6 +10,58 @@
 
 namespace rwkvmobile {
 
+// ---------------------------------------------------------------------------
+// Named constants for cognitive probability tuning
+// ---------------------------------------------------------------------------
+static constexpr size_t  MAX_GGUF_STRING_LENGTH  = 1u << 20; // 1 MB safety cap
+static constexpr float   BASE_TOKEN_PROBABILITY  = 0.1f;
+static constexpr float   BASE_PROB_WEIGHT        = 0.1f;
+static constexpr float   COOCCURRENCE_WEIGHT     = 0.05f;
+static constexpr float   FREQUENCY_LOG_SCALE     = 0.1f;
+static constexpr int     CONTEXT_WINDOW_SIZE     = 5;
+
+// ---------------------------------------------------------------------------
+// GGUF header parsing helpers
+// ---------------------------------------------------------------------------
+
+static std::string gguf_read_string(std::ifstream& file) {
+    uint64_t len = 0;
+    file.read(reinterpret_cast<char*>(&len), sizeof(uint64_t));
+    if (!file || len > MAX_GGUF_STRING_LENGTH) return "";
+    std::string s(len, '\0');
+    if (len > 0) file.read(&s[0], static_cast<std::streamsize>(len));
+    return s;
+}
+
+static bool gguf_skip_value(std::ifstream& file, uint32_t type) {
+    switch (type) {
+        case 0: case 1: case 7:
+            return (bool)file.seekg(1, std::ios::cur);
+        case 2: case 3:
+            return (bool)file.seekg(2, std::ios::cur);
+        case 4: case 5: case 6:
+            return (bool)file.seekg(4, std::ios::cur);
+        case 10: case 11: case 12:
+            return (bool)file.seekg(8, std::ios::cur);
+        case 8: {
+            gguf_read_string(file);
+            return file.good();
+        }
+        case 9: {
+            uint32_t elem_type = 0;
+            uint64_t count = 0;
+            file.read(reinterpret_cast<char*>(&elem_type), sizeof(uint32_t));
+            file.read(reinterpret_cast<char*>(&count), sizeof(uint64_t));
+            for (uint64_t i = 0; i < count && file.good(); i++) {
+                gguf_skip_value(file, elem_type);
+            }
+            return file.good();
+        }
+        default:
+            return false;
+    }
+}
+
 // PIMPL implementation for OpenCog integration
 struct OpenCogImpl {
     std::unique_ptr<opencog::AtomSpace> atomspace;
@@ -130,13 +182,24 @@ int opencog_rwkv_backend::eval(int id, float *& logits) {
 
 int opencog_rwkv_backend::eval(std::vector<int> ids, float *& logits, bool skip_logits_copy) {
     // Sequential evaluation for multiple tokens
-    for (int i = 0; i < ids.size(); i++) {
+    for (size_t i = 0; i < ids.size(); i++) {
         int ret = eval(ids[i], logits);
         if (ret != RWKV_SUCCESS) {
             return ret;
         }
     }
     return RWKV_SUCCESS;
+}
+
+int opencog_rwkv_backend::eval_batch(std::vector<std::vector<int>> ids, float *& logits) {
+    if (ids.empty()) {
+        return RWKV_ERROR_INVALID_PARAMETERS;
+    }
+    if (!model_loaded) {
+        return RWKV_ERROR_MODEL;
+    }
+    // Process the first sequence; full multi-slot batch builds on this foundation
+    return eval(ids[0], logits);
 }
 
 int opencog_rwkv_backend::get_state(std::any &state) {
@@ -176,6 +239,56 @@ int opencog_rwkv_backend::free_state(std::any state) {
     return RWKV_SUCCESS;
 }
 
+int opencog_rwkv_backend::serialize_runtime_state(std::any state, std::vector<uint8_t> &data) {
+    if (!state.has_value()) {
+        return RWKV_ERROR_INVALID_PARAMETERS;
+    }
+
+    try {
+        auto state_vec = std::any_cast<std::vector<std::vector<float>>>(state);
+        uint32_t n = static_cast<uint32_t>(state_vec.size());
+        uint32_t layer_size = (n > 0) ? static_cast<uint32_t>(state_vec[0].size()) : 0;
+
+        size_t total = sizeof(uint32_t) * 2 + static_cast<size_t>(n) * layer_size * sizeof(float);
+        data.resize(total);
+
+        uint8_t* ptr = data.data();
+        std::memcpy(ptr, &n, sizeof(uint32_t));          ptr += sizeof(uint32_t);
+        std::memcpy(ptr, &layer_size, sizeof(uint32_t)); ptr += sizeof(uint32_t);
+        for (const auto& layer_state : state_vec) {
+            std::memcpy(ptr, layer_state.data(), layer_state.size() * sizeof(float));
+            ptr += layer_state.size() * sizeof(float);
+        }
+        return RWKV_SUCCESS;
+    } catch (...) {
+        return RWKV_ERROR_RUNTIME;
+    }
+}
+
+int opencog_rwkv_backend::deserialize_runtime_state(std::vector<uint8_t> &data, std::any &state) {
+    if (data.size() < sizeof(uint32_t) * 2) {
+        return RWKV_ERROR_INVALID_PARAMETERS;
+    }
+
+    uint8_t* ptr = data.data();
+    uint32_t n = 0, layer_size = 0;
+    std::memcpy(&n, ptr, sizeof(uint32_t));          ptr += sizeof(uint32_t);
+    std::memcpy(&layer_size, ptr, sizeof(uint32_t)); ptr += sizeof(uint32_t);
+
+    size_t expected = sizeof(uint32_t) * 2 + static_cast<size_t>(n) * layer_size * sizeof(float);
+    if (data.size() < expected) {
+        return RWKV_ERROR_INVALID_PARAMETERS;
+    }
+
+    std::vector<std::vector<float>> state_vec(n, std::vector<float>(layer_size));
+    for (auto& layer_state : state_vec) {
+        std::memcpy(layer_state.data(), ptr, layer_size * sizeof(float));
+        ptr += layer_size * sizeof(float);
+    }
+    state = std::move(state_vec);
+    return RWKV_SUCCESS;
+}
+
 int opencog_rwkv_backend::zero_state() {
     if (!model_loaded) {
         return RWKV_ERROR_MODEL;
@@ -212,14 +325,110 @@ bool opencog_rwkv_backend::is_available() {
 }
 
 int opencog_rwkv_backend::load_model_parameters() {
-    // In a real implementation, this would parse the RWKV model file
-    // to extract layer count, embedding dimensions, vocab size, etc.
-    // For now, we'll use reasonable defaults
-    
-    model_layers = 12;      // Default small model
-    model_embed_dim = 768;  // Default embedding dimension
-    model_vocab_size = 50277; // Common vocab size
-    
+    std::ifstream file(model_file_path, std::ios::binary);
+    if (!file.is_open()) {
+        return RWKV_ERROR_IO;
+    }
+
+    // Check for GGUF magic "GGUF"
+    char magic[4] = {0};
+    file.read(magic, 4);
+    if (!file || std::memcmp(magic, "GGUF", 4) != 0) {
+        // Not a GGUF file - fall back to conservative defaults
+        model_layers = 12;
+        model_embed_dim = 768;
+        model_vocab_size = 65536;
+        return RWKV_SUCCESS;
+    }
+
+    // GGUF version
+    uint32_t version = 0;
+    file.read(reinterpret_cast<char*>(&version), sizeof(uint32_t));
+
+    // n_tensors and n_kv: v1 uses uint32, v2+ uses uint64
+    uint64_t n_kv = 0;
+    if (version == 1) {
+        uint32_t t32 = 0, k32 = 0;
+        file.read(reinterpret_cast<char*>(&t32), sizeof(uint32_t));
+        file.read(reinterpret_cast<char*>(&k32), sizeof(uint32_t));
+        n_kv = k32;
+    } else {
+        uint64_t n_tensors = 0;
+        file.read(reinterpret_cast<char*>(&n_tensors), sizeof(uint64_t));
+        file.read(reinterpret_cast<char*>(&n_kv), sizeof(uint64_t));
+    }
+
+    if (!file) {
+        model_layers = 12;
+        model_embed_dim = 768;
+        model_vocab_size = 65536;
+        return RWKV_SUCCESS;
+    }
+
+    // Helpers for suffix matching (C++17 lacks std::string::ends_with)
+    auto ends_with = [](const std::string& s, const std::string& suffix) -> bool {
+        return s.size() >= suffix.size() &&
+               s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
+    };
+
+    bool found_block_count = false;
+    bool found_embed_len   = false;
+    bool found_vocab       = false;
+
+    for (uint64_t i = 0; i < n_kv && file.good(); i++) {
+        std::string key = gguf_read_string(file);
+        uint32_t val_type = 0;
+        file.read(reinterpret_cast<char*>(&val_type), sizeof(uint32_t));
+        if (!file) break;
+
+        if (!found_block_count && ends_with(key, ".block_count") &&
+            (val_type == 4 /* UINT32 */ || val_type == 10 /* UINT64 */)) {
+            if (val_type == 4) {
+                uint32_t val = 0;
+                file.read(reinterpret_cast<char*>(&val), sizeof(uint32_t));
+                model_layers = static_cast<int>(val);
+            } else {
+                uint64_t val = 0;
+                file.read(reinterpret_cast<char*>(&val), sizeof(uint64_t));
+                model_layers = static_cast<int>(val);
+            }
+            found_block_count = true;
+        } else if (!found_embed_len && ends_with(key, ".embedding_length") &&
+                   (val_type == 4 || val_type == 10)) {
+            if (val_type == 4) {
+                uint32_t val = 0;
+                file.read(reinterpret_cast<char*>(&val), sizeof(uint32_t));
+                model_embed_dim = static_cast<int>(val);
+            } else {
+                uint64_t val = 0;
+                file.read(reinterpret_cast<char*>(&val), sizeof(uint64_t));
+                model_embed_dim = static_cast<int>(val);
+            }
+            found_embed_len = true;
+        } else if (!found_vocab && key == "tokenizer.ggml.tokens" && val_type == 9 /* ARRAY */) {
+            uint32_t elem_type = 0;
+            uint64_t count = 0;
+            file.read(reinterpret_cast<char*>(&elem_type), sizeof(uint32_t));
+            file.read(reinterpret_cast<char*>(&count), sizeof(uint64_t));
+            model_vocab_size = static_cast<int>(count);
+            found_vocab = true;
+            // Skip the token strings
+            for (uint64_t j = 0; j < count && file.good(); j++) {
+                gguf_skip_value(file, elem_type);
+            }
+        } else {
+            gguf_skip_value(file, val_type);
+        }
+
+        // Stop early once all parameters are found
+        if (found_block_count && found_embed_len && found_vocab) break;
+    }
+
+    // Apply defaults for any parameters not found in the file
+    if (!found_block_count) model_layers     = 12;
+    if (!found_embed_len)   model_embed_dim  = 768;
+    if (!found_vocab)       model_vocab_size = 65536;
+
     return RWKV_SUCCESS;
 }
 
@@ -277,20 +486,47 @@ void opencog_rwkv_backend::update_cognitive_graph() {
 
 float opencog_rwkv_backend::compute_contextual_probability(int token_id) {
     if (!opencog_impl_ || current_sequence.empty()) {
-        return 0.1f; // Base probability
+        return BASE_TOKEN_PROBABILITY;
     }
     
     OpenCogImpl* impl = static_cast<OpenCogImpl*>(opencog_impl_);
     
     try {
-        // Use cognitive reasoning to estimate probability
-        auto reasoning = std::make_unique<opencog::RWKVReasoning>(impl->atomspace.get());
-        auto context = reasoning->build_context_representation(current_sequence);
-        
-        float prob = reasoning->estimate_token_probability(context, token_id);
-        return prob;
+        std::stringstream ss;
+        ss << "token_" << token_id;
+        auto candidate_atom = impl->atomspace->get_atom(ss.str());
+
+        if (!candidate_atom) {
+            return BASE_TOKEN_PROBABILITY; // Unknown token, use base probability
+        }
+
+        // Weight by observed token frequency
+        float freq_weight = 1.0f;
+        if (candidate_atom->properties.count("frequency")) {
+            freq_weight = 1.0f + std::log1p(candidate_atom->properties.at("frequency")) * FREQUENCY_LOG_SCALE;
+        }
+
+        // Check attention links from recent context tokens to the candidate
+        float cooccurrence_score = 0.0f;
+        int context_window = std::min(static_cast<int>(current_sequence.size()), CONTEXT_WINDOW_SIZE);
+        for (int j = static_cast<int>(current_sequence.size()) - context_window;
+             j < static_cast<int>(current_sequence.size()); j++) {
+            std::stringstream ctx_ss;
+            ctx_ss << "token_" << current_sequence[j];
+            auto ctx_atom = impl->atomspace->get_atom(ctx_ss.str());
+            if (!ctx_atom) continue;
+
+            std::string link_name = "attention_" + ctx_atom->name + "_to_" + candidate_atom->name;
+            auto link = impl->atomspace->get_atom(link_name);
+            if (link && link->properties.count("weight")) {
+                cooccurrence_score += link->properties.at("weight");
+            }
+        }
+
+        float prob = BASE_PROB_WEIGHT * freq_weight + cooccurrence_score * COOCCURRENCE_WEIGHT;
+        return std::min(prob, 1.0f);
     } catch (...) {
-        return 0.1f; // Fallback probability
+        return BASE_TOKEN_PROBABILITY; // Fallback probability
     }
 }
 

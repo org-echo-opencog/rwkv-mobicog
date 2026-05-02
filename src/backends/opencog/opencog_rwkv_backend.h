@@ -28,6 +28,7 @@ public:
     int load_model(std::string model_path) override;
     int eval(int id, float *& logits) override;
     int eval(std::vector<int> ids, float *& logits, bool skip_logits_copy = false) override;
+    int eval_batch(std::vector<std::vector<int>> ids, float *& logits) override;
     bool is_available() override;
     int get_state(std::any &state) override;
     int set_state(std::any state) override;
@@ -35,6 +36,8 @@ public:
     int zero_state() override;
     int release_model() override;
     int release() override;
+    int serialize_runtime_state(std::any state, std::vector<uint8_t> &data) override;
+    int deserialize_runtime_state(std::vector<uint8_t> &data, std::any &state) override;
 
 private:
     // OpenCog integration (using void* to avoid incomplete type issues)
