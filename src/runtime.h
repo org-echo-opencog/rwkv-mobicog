@@ -345,6 +345,12 @@ public:
     std::map<int, std::map<std::string, std::string>> get_loaded_models_info();
     std::string& get_model_path_by_id(int model_id);
 
+    // direct backend access (returns nullptr if model_id is invalid)
+    execution_provider* get_backend(int model_id) {
+        auto it = _models.find(model_id);
+        return (it != _models.end() && it->second) ? it->second->backend.get() : nullptr;
+    }
+
     // misc
     inline void set_cache_dir(std::string cache_dir) { _cache_dir = cache_dir; }
 
