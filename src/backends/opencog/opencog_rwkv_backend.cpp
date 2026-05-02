@@ -11,13 +11,23 @@
 namespace rwkvmobile {
 
 // ---------------------------------------------------------------------------
+// Named constants for cognitive probability tuning
+// ---------------------------------------------------------------------------
+static constexpr size_t  MAX_GGUF_STRING_LENGTH  = 1u << 20; // 1 MB safety cap
+static constexpr float   BASE_TOKEN_PROBABILITY  = 0.1f;
+static constexpr float   BASE_PROB_WEIGHT        = 0.1f;
+static constexpr float   COOCCURRENCE_WEIGHT     = 0.05f;
+static constexpr float   FREQUENCY_LOG_SCALE     = 0.1f;
+static constexpr int     CONTEXT_WINDOW_SIZE     = 5;
+
+// ---------------------------------------------------------------------------
 // GGUF header parsing helpers
 // ---------------------------------------------------------------------------
 
 static std::string gguf_read_string(std::ifstream& file) {
     uint64_t len = 0;
     file.read(reinterpret_cast<char*>(&len), sizeof(uint64_t));
-    if (!file || len > (1u << 20)) return "";
+    if (!file || len > MAX_GGUF_STRING_LENGTH) return "";
     std::string s(len, '\0');
     if (len > 0) file.read(&s[0], static_cast<std::streamsize>(len));
     return s;
@@ -476,7 +486,7 @@ void opencog_rwkv_backend::update_cognitive_graph() {
 
 float opencog_rwkv_backend::compute_contextual_probability(int token_id) {
     if (!opencog_impl_ || current_sequence.empty()) {
-        return 0.1f; // Base probability
+        return BASE_TOKEN_PROBABILITY;
     }
     
     OpenCogImpl* impl = static_cast<OpenCogImpl*>(opencog_impl_);
@@ -487,18 +497,18 @@ float opencog_rwkv_backend::compute_contextual_probability(int token_id) {
         auto candidate_atom = impl->atomspace->get_atom(ss.str());
 
         if (!candidate_atom) {
-            return 0.1f; // Unknown token, use base probability
+            return BASE_TOKEN_PROBABILITY; // Unknown token, use base probability
         }
 
         // Weight by observed token frequency
         float freq_weight = 1.0f;
         if (candidate_atom->properties.count("frequency")) {
-            freq_weight = 1.0f + std::log1p(candidate_atom->properties.at("frequency")) * 0.1f;
+            freq_weight = 1.0f + std::log1p(candidate_atom->properties.at("frequency")) * FREQUENCY_LOG_SCALE;
         }
 
         // Check attention links from recent context tokens to the candidate
         float cooccurrence_score = 0.0f;
-        int context_window = std::min(static_cast<int>(current_sequence.size()), 5);
+        int context_window = std::min(static_cast<int>(current_sequence.size()), CONTEXT_WINDOW_SIZE);
         for (int j = static_cast<int>(current_sequence.size()) - context_window;
              j < static_cast<int>(current_sequence.size()); j++) {
             std::stringstream ctx_ss;
@@ -513,10 +523,10 @@ float opencog_rwkv_backend::compute_contextual_probability(int token_id) {
             }
         }
 
-        float prob = 0.1f * freq_weight + cooccurrence_score * 0.05f;
+        float prob = BASE_PROB_WEIGHT * freq_weight + cooccurrence_score * COOCCURRENCE_WEIGHT;
         return std::min(prob, 1.0f);
     } catch (...) {
-        return 0.1f; // Fallback probability
+        return BASE_TOKEN_PROBABILITY; // Fallback probability
     }
 }
 
